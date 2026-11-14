@@ -219,12 +219,3 @@ private func stripTrailingCR(_ scalars: String.UnicodeScalarView) -> String {
     }
     return String(copy)
 }
-
-/// Rust `str::trim`: strips Unicode whitespace from both ends.
-private func rustTrim(_ text: String) -> String {
-    let scalars = text.unicodeScalars
-    guard let first = scalars.firstIndex(where: { !$0.properties.isWhitespace }),
-          let last = scalars.lastIndex(where: { !$0.properties.isWhitespace })
-    else { return "" }
-    return String(String.UnicodeScalarView(scalars[first...last]))
-}
