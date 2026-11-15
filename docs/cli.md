@@ -13,8 +13,8 @@ plans the changes, and applies them only after you approve.
 
 ## Install
 
-The CLI ships inside `DotfileSync.app`. Build and install the signed app (see the
-[README quick start](../README.md#quick-start)), then put the CLI on your path:
+The CLI ships inside `DotfileSync.app`. Build and install the signed app (see
+[Building and developing](development.md)), then put the CLI on your path:
 
 ```sh
 # zsh / bash

@@ -1,249 +1,68 @@
 # dotfile-sync
 
-My macOS setup, kept in one repo: the Homebrew packages I use, my Fish and Zed config, and the
-tools that put them on a new Mac.
+Set up a Mac for coding from one repo: Homebrew apps and tools, Fish shell, and editor settings.
 
-There are two ways to apply it:
+This repo gives you two ways to do it:
 
-- **dotfilesync**: a native macOS app and command-line tool. It shows what is different between
-  this repo and your Mac, plans the changes, and applies them only after you approve with
-  Touch ID. Every replaced file is backed up first.
-- **`setup.sh`**: the original shell script. It still works and covers a few things dotfilesync
-  does not do yet (installing Homebrew itself, Node, Xcode).
+| | What it is | Use it when |
+|---|---|---|
+| **dotfilesync** | A Mac app and command-line tool | You want to see what will change before anything happens, with backups. |
+| **`setup.sh`** | A shell script | You are on a brand-new Mac, or you want Node, Xcode or Homebrew itself installed. |
 
 ## dotfilesync
 
-### What it does
+dotfilesync compares your Mac with the list in [`dotfilesync.toml`](dotfilesync.toml) and fixes
+the differences, but only after you say yes.
 
-- **Shows drift.** `status` tells you which packages and config files match the repo, which are
-  missing and which have changed. It never changes anything.
-- **Plans before it acts.** `plan` lists every change, with a risk level, before anything happens.
-- **Applies safely.** `apply` asks you to confirm, then asks for Touch ID. It backs up each file it
-  replaces, never overwrites your machine-local files, and never uses `sudo` unless you allow it.
-- **Keeps history.** Every apply is recorded, so you can see what changed and restore a backup.
-- **Imports a Brewfile.** `import-brewfile` turns an existing Brewfile into a starting manifest.
+1. **`status`** shows what is missing or different. It changes nothing.
+2. **`plan`** lists exactly what it would do.
+3. **`apply`** does it, after you confirm and approve with Touch ID. Every file it replaces is
+   backed up first.
 
-Everything it manages is declared in [`dotfilesync.toml`](dotfilesync.toml).
+### Install
 
-### Quick start
-
-You need macOS 26 and Xcode. Signing is required, but a free Apple ID is enough: add it under
-Xcode → Settings → Accounts, then pick your team in the DotfileSync target's **Signing &
-Capabilities**.
+You need macOS 26, Xcode and a free Apple ID. Follow [Building](docs/development.md) to build
+and install `DotfileSync.app`, then:
 
 ```sh
-# Build and install the app
-xcodebuild -project App/DotfileSync.xcodeproj -scheme DotfileSync -configuration Release \
-  -destination 'platform=macOS' -derivedDataPath build/DerivedData -allowProvisioningUpdates build
-ditto build/DerivedData/Build/Products/Release/DotfileSync.app /Applications/DotfileSync.app
 alias dotfilesync=/Applications/DotfileSync.app/Contents/MacOS/dotfilesync
 
-# One-time: register the background agent
-dotfilesync service install
-dotfilesync service open-settings   # if asked, allow DotfileSync under Login Items
-
-# Use it
-dotfilesync status --manifest dotfilesync.toml
-dotfilesync plan
-dotfilesync apply
+dotfilesync service install         # one time: register the background helper
+dotfilesync service open-settings   # if asked: switch DotfileSync on under Login Items
 ```
 
-Prefer a window? Open **DotfileSync** from Applications: it does the same scan, plan and apply.
+### Use
 
-### Documentation
-
-| Guide | What is in it |
-|---|---|
-| **[CLI manual](docs/cli.md)** | Every command and option, the everyday workflow, where data lives, troubleshooting. Start here. |
-| [Manifest reference](docs/manifest.md) | How to write `dotfilesync.toml`: packages, files, exclusions, overrides, profiles. |
-| [Plan and apply](docs/plan-apply.md) | How plans, approvals, backups and resuming work. |
-| [Architecture](docs/daemon-architecture.md) | How the app, agent and CLI fit together, and the security model. |
-| [Manual QA checklist](docs/daemon-manual-qa.md) | Hands-on checks for a signed build. |
-
-### Limitations
-
-- Installing Homebrew itself, Node (fnm, pnpm), Xcode and LM Studio models still need `setup.sh`.
-- No file watching or automatic sync yet; you run `plan` and `apply` yourself.
-- macOS only.
-
-### Development
-
-The code is a Swift package, [`Packages/DotfileSyncKit`](Packages/DotfileSyncKit), plus the
-SwiftUI app in [`App/`](App). Tests use temporary folders and fakes, so they never touch your
-home folder, Homebrew or launchd.
+From this folder:
 
 ```sh
-cd Packages/DotfileSyncKit && swift test
-xcodebuild -project App/DotfileSync.xcodeproj -scheme DotfileSync \
-  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build test
+dotfilesync status --manifest dotfilesync.toml   # what is different?
+dotfilesync plan                                  # what would change?
+dotfilesync apply                                 # make the changes
 ```
 
-## Shell bootstrap (`setup.sh`)
+Prefer clicking? Open **DotfileSync** from Applications. It does the same thing.
 
-Brewfile-driven macOS coding environment bootstrap: Fish shell, Tide prompt, fnm (Node), and the CLI/GUI tools you declare in a Brewfile.
+## setup.sh
 
-### Quick start
-
-```bash
-bash ./setup.sh
+```sh
+bash ./setup.sh             # install everything
+bash ./setup.sh --dry-run   # only show what it would do
 ```
 
-Useful flags:
+It installs Homebrew, the apps in [`Brewfile`](Brewfile), Fish with the Tide prompt, Node, Xcode
+and the Zed settings. Flags, custom Fish commands and details: [setup.sh guide](docs/setup-sh.md).
 
-```bash
-bash ./setup.sh --dry-run       # preview only
-bash ./setup.sh --skip-casks    # formulas only (no GUI apps)
-bash ./setup.sh --skip-shell    # keep your current login shell
-bash ./setup.sh --skip-xcode    # skip latest Xcode download/install
-bash ./setup.sh --skip-fonts    # skip 0xProto font cask
-bash ./setup.sh --skip-zed      # skip Zed settings sync
-bash ./setup.sh --skip-models   # skip LM Studio model downloads
-```
+## Documentation
 
-### What it does
-
-1. Installs Homebrew if missing
-2. Applies [`Brewfile`](Brewfile) (CLI formulas + casks)
-3. Installs **0xProto** via Homebrew `font-0xproto` (prefer [2.502](https://github.com/0xType/0xProto/releases/tag/2.502); still runs after `--skip-casks` unless `--skip-fonts`)
-4. Syncs checked-in [`fish/`](fish/) templates into `~/.config/fish` (backs up changed files)
-5. Installs Fisher + plugins (Tide, done, bass)
-6. Syncs checked-in [`zed/settings.json`](zed/settings.json) into `~/.config/zed/settings.json` (prompts before overwrite if a different file already exists)
-7. Installs **Node.js LTS** via [fnm](https://github.com/Schniz/fnm) and enables **pnpm** via Corepack
-8. Installs the **latest Xcode** via [xcodes](https://github.com/XcodesOrg/xcodes) (Apple ID may be required; large download)
-9. Downloads preferred local models via **LM Studio CLI** (`lms get`)
-10. Optionally sets Fish as your login shell
-
-### Layout
-
-```
-dotfile-sync/
-├── setup.sh              # Thin orchestrator
-├── Brewfile              # Declarative packages + casks
-├── lib/
-│   ├── log.sh
-│   ├── brew.sh
-│   ├── fonts.sh
-│   ├── fish.sh
-│   ├── node.sh
-│   ├── xcode.sh
-│   ├── zed.sh
-│   └── models.sh
-├── fish/
-│   ├── config.fish
-│   ├── fish_plugins
-│   ├── conf.d/fnm.fish
-│   └── functions/
-├── zed/
-│   └── settings.json     # Global Zed editor settings
-├── dotfilesync.toml      # dotfilesync manifest (see below)
-├── Packages/DotfileSyncKit/  # dotfilesync: SwiftPM package (agent, CLI, core)
-├── App/                  # dotfilesync: SwiftUI app (Xcode project, LaunchAgents plist)
-├── fixtures/             # Golden test inputs shared by the Swift tests
-├── docs/
-└── README.md
-```
-
-### Adding software
-
-- **CLI / Homebrew apps:** edit `Brewfile`, then re-run `bash ./setup.sh` (or `brew bundle --file=Brewfile`).
-- **Fish plugins:** edit `fish/fish_plugins`, then re-run setup (or `fisher update` in Fish).
-- **Fish config / functions:** edit files under `fish/`, then re-run setup to sync.
-- **Zed settings:** edit [`zed/settings.json`](zed/settings.json), then re-run setup to sync to `~/.config/zed/settings.json`.
-
-#### Local environment variables
-
-Shared config must not contain secrets. Setup creates (once):
-
-```text
-~/.config/fish/conf.d/local.fish
-```
-
-from the documented empty template [`fish/conf.d/local.fish`](fish/conf.d/local.fish). Later `setup.sh` runs **never overwrite** that file. Put project IDs, tokens, and machine-only paths there (`editenv`), then `reload`.
-
-#### GUI apps (casks)
-
-Included today (matched to `/Applications` where a cask exists):
-
-- Ghostty, Zed, Raycast, LLM-Studio, Rectangle, JetBrains Toolbox
-- Discord, Lark, Docker Desktop, Brave, Spotify, OBS
-- GitHub Desktop, Cursor, Claude, Inkscape
-- Steam, Audacity, Cloudflare WARP, eqMac, pgAdmin 4
-- Antigravity, Google Gemini, Juicy, Epic Games, Minecraft, Roblox
-- Windows App
-
-**No Homebrew cask** (install/update manually or via Mac App Store):
-
-- Blackmagic Proxy Generator Lite, Blackmagic RAW, DaVinci Resolve
-- VMware Fusion, LockDown Browser, Magic Garden, Developer (WWDC)
-- Keynote, Numbers, Pages, Safari, Xcode
-- Python 3.13.app (python.org; CLI Python is covered by Brewfile `python`)
-
-Full **Xcode** is installed by `setup.sh` via `xcodes` (not a Homebrew cask). Use `--skip-xcode` to skip.
-
-#### Fonts
-
-**0xProto** is installed with Homebrew cask `font-0xproto` (user fonts under `~/Library/Fonts`). Preferred release: **2.502** (see `OXPROTO_PREFERRED_VERSION` in [`lib/fonts.sh`](lib/fonts.sh)). Setup still installs it when you pass `--skip-casks`; use `--skip-fonts` to skip. Ghostty, Zed, and other apps need the font selected in their settings after install.
-
-#### Zed settings
-
-Global Zed config lives in [`zed/settings.json`](zed/settings.json) and installs to `~/.config/zed/settings.json`.
-
-- Missing destination → copies the template quietly
-- Identical to template → skips
-- Different existing file → warns and asks `Overwrite? [y/N]` (default **N**); only overwrites on `y`/`Y`
-- Use `--skip-zed` to skip; `DRY_RUN=1` / `--dry-run` prints intent without writing or prompting to overwrite
-
-#### Updating packages
-
-Homebrew formulae and casks are updated through [Vorssaint](https://github.com/vorssaint/vorssaint-utils) (App updates / Homebrew manager). In Fish, run `fisherup` to update Fisher plugins.
-
-### Node via fnm
-
-This setup uses **fnm**, not nvm / nvm.fish.
-
-- Default: latest **LTS** (`fnm install --lts`)
-- Per-project: `.node-version` or `.nvmrc` with `fnm env --use-on-cd`
-
-```fish
-fnm list
-fnm install lts
-fnm use 22
-```
-
-If you previously used nvm, `~/.nvm` is left alone. After confirming fnm works you can remove it and `brew uninstall nvm` if present.
-
-### Prompt
-
-Uses [Tide](https://github.com/IlanCosman/tide) (`ilancosman/tide@v6`). Configure with `tide configure`.
-
-### Custom Fish commands
-
-In Fish, run `helpme` for the full list. Highlights:
-
-| Command | Description |
-|---------|-------------|
-| `helpme` | List custom commands (links to this repo) |
-| `fisherup` | Update Fisher plugins |
-| `reload` | Reload Fish config |
-| `editfish` | Open config in `$EDITOR` |
-| `editenv` | Open `~/.config/fish/conf.d/local.fish` in `$EDITOR` |
-| `mkcd <dir>` | mkdir + cd |
-| `extract <file>` | Unpack common archives |
-| `ff` / `fdir` | Find files / directories |
-| `ql <file>` | Quick Look |
-| `cdf` | cd to frontmost Finder window |
-| `flushdns` | Flush macOS DNS cache |
-| `showpath` | Print `$PATH` one entry per line |
-| `serve [port]` | Python HTTP server |
-| `note [text]` | Quick notes |
-
-Git abbreviations: `gst`, `gco`, `gaa`, `gcm`, `gps`, `gpl`, …
-
-### Requirements
-
-- macOS
-- Network access (Homebrew, Fisher, fnm)
-- Git (usually via Xcode CLT / Homebrew)
+| Guide | For |
+|---|---|
+| [CLI manual](docs/cli.md) | Every dotfilesync command, where backups go, troubleshooting |
+| [Manifest reference](docs/manifest.md) | Editing `dotfilesync.toml`: apps, files, profiles |
+| [setup.sh guide](docs/setup-sh.md) | Script flags, Fish commands, fonts, Node, Zed |
+| [Building and developing](docs/development.md) | Building the app, running tests, code layout |
+| [Plan and apply](docs/plan-apply.md) | How approvals, backups and resuming work |
+| [Architecture](docs/daemon-architecture.md) | How the app, helper and CLI fit together; security |
 
 ## License
 
