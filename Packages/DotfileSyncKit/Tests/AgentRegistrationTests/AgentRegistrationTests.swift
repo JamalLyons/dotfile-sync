@@ -1,5 +1,6 @@
 import Foundation
 import Synchronization
+import ServiceManagement
 import Testing
 
 @testable import AgentRegistration
@@ -134,6 +135,14 @@ final class FakeBackend: AgentServiceBackend {
         let fake = FakeBackend(.enabled)
         #expect(try AgentRegistration(backend: fake).unregister() == .unregistered)
         #expect(FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    // Covers mapStatus over every SMAppService.Status case (from the parallel S4b child run).
+    @Test func statusMapsEverySMAppServiceCase() {
+        #expect(mapStatus(.notRegistered) == .notRegistered)
+        #expect(mapStatus(.enabled) == .enabled)
+        #expect(mapStatus(.requiresApproval) == .requiresApproval)
+        #expect(mapStatus(.notFound) == .notFound)
     }
 
     @Test func statusJSONIsSnakeCase() throws {
