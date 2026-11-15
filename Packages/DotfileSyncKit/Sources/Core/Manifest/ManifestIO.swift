@@ -56,7 +56,7 @@ public func loadManifest(_ url: URL) throws(ManifestError) -> Manifest {
 public func serializeManifest(_ manifest: Manifest) throws(ManifestError) -> String {
     do {
         let encoded: String = try TOMLEncoder().encode(manifest)
-        return encoded
+        return encoded.hasSuffix("\n") ? encoded : encoded + "\n"
     } catch {
         throw .serialize(String(describing: error))
     }

@@ -1,5 +1,6 @@
 // Port of crates/dotfilesync-cli/tests/cli_tests.rs. Spawns the built `dotfilesync`.
 
+import Core
 import Foundation
 import System
 import Testing
@@ -33,6 +34,12 @@ import Testing
         #expect(first.stdout.contains("Wrote manifest skeleton to:"))
         #expect(exists(output))
         let initial = try Data(contentsOf: URL(fileURLWithPath: output.string))
+        // The skeleton is a loadable manifest with the Brewfile's packages (formatting may differ
+        // from the Rust CLI; the content may not).
+        let written = try loadManifest(output.string)
+        #expect(written.packageManagers.homebrew.formulae == ["bat", "fish", "git", "ripgrep"])
+        #expect(written.packageManagers.homebrew.casks == ["ghostty", "zed"])
+        #expect(String(decoding: initial, as: UTF8.self).hasSuffix("\n"))
 
         let second = try env.cli(args).failure()
         #expect(second.stderr.contains("already exists; refusing to overwrite"))

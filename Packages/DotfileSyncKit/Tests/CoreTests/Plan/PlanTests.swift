@@ -67,6 +67,32 @@ struct PlanTests {
         #expect(first.actions.contains { $0.backup })
     }
 
+    // Swift-only: a failing `dscl` must not turn into an empty login shell, which would give the
+    // plan a different state fingerprint than a later observation.
+    @Test func failingDsclFailsThePlanInsteadOfHashingAnEmptyShell() throws {
+        let tmp = try TempDir()
+        let manifest = try Self.writeFixture(tmp.url)
+        let record = "/Users/\(ProcessInfo.processInfo.environment["USER"] ?? "unknown")"
+        let dsclError = RunnerError.nonZeroExit(program: "dscl", code: 70, stderr: "DS Error")
+        let runner = Self.brewRunner(#"{"formulae":[],"casks":[]}"#)
+            .withResponse("dscl", args: [".", "-read", record, "UserShell"], .failure(dsclError))
+        let input = PlanInput(
+            manifest: manifest, home: FilePath(tmp.path).appending("home"),
+            repoRoot: FilePath(tmp.path).appending("repo"), profile: nil
+        )
+        #expect(throws: OpError.failed("cannot read the login shell with dscl: \(dsclError)")) {
+            try runPlan(input, runner: runner, hostname: "test-host")
+        }
+
+        let working = Self.brewRunner(#"{"formulae":[],"casks":[]}"#).withResponse(
+            "dscl", args: [".", "-read", record, "UserShell"],
+            .success(CommandOutput(statusCode: 0, stdout: "UserShell: /bin/zsh\n", stderr: ""))
+        )
+        let plan = try runPlan(input, runner: working, hostname: "test-host")
+        let unknownShell = try runPlan(input, runner: Self.brewRunner(#"{"formulae":[],"casks":[]}"#), hostname: "test-host")
+        #expect(plan.stateFingerprint != unknownShell.stateFingerprint)
+    }
+
     /// A plan covering every `ActionKind` variant, `Some`/`None` options, escapes and non-ASCII.
     static func fixedPlan() -> Plan {
         func a(_ id: String, _ kind: ActionKind, _ summary: String, _ risk: Risk, _ rev: Bool, _ backup: Bool) -> PlanAction {

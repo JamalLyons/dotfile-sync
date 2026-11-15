@@ -56,7 +56,7 @@ public func runPlan(
     try checkCancelled(isCancelled)
     progress(.planning)
 
-    let loginShell = observeLoginShell(runner)
+    let loginShell = try observeLoginShell(runner)
 
     var drafts: [Draft] = []
     if brew.available && brew.packagesEnumerated {
@@ -260,14 +260,28 @@ func isRegularFileFollowing(_ path: FilePath) -> Bool {
     return (st.st_mode & S_IFMT) == S_IFREG
 }
 
-/// The current login shell from `dscl . -read /Users/$USER UserShell`, or `""` on failure.
-func observeLoginShell(_ runner: any CommandRunner) -> String {
+/// The current login shell from `dscl . -read /Users/$USER UserShell`, or `""` when `dscl` does
+/// not exist (offline runners). Any other failure is retried once and then thrown: an empty
+/// shell would silently change the plan's state fingerprint and burn the approval at apply time.
+func observeLoginShell(_ runner: any CommandRunner) throws(OpError) -> String {
     let user = ProcessInfo.processInfo.environment["USER"] ?? "unknown"
     let record = "/Users/\(user)"
-    guard let output = try? runner.run("dscl", args: [".", "-read", record, "UserShell"]) else {
-        return ""
+    var lastError: RunnerError?
+    for _ in 0..<2 {
+        do {
+            let output = try runner.run("dscl", args: [".", "-read", record, "UserShell"])
+            return rustSplitWhitespace(output.stdout).last ?? ""
+        } catch {
+            if case .executableNotFound = error {
+                return ""
+            }
+            if case .cancelled = error {
+                throw .cancelled
+            }
+            lastError = error
+        }
     }
-    return rustSplitWhitespace(output.stdout).last ?? ""
+    throw .failed("cannot read the login shell with dscl: \(lastError.map { "\($0)" } ?? "unknown error")")
 }
 
 /// Rust `str::split_whitespace` (Unicode `White_Space`, empty pieces dropped).

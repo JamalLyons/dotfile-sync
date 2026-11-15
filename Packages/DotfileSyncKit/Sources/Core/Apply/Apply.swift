@@ -423,7 +423,8 @@ private func setLoginShell(_ ctx: ApplyContext, _ shell: FilePath) throws(ApplyI
     if try !shellListed(shellText) {
         try appendShell(ctx, shellText)
     }
-    let previous = observeLoginShell(ctx.runner)
+    // Only recorded so the journal can show what was replaced.
+    let previous = (try? observeLoginShell(ctx.runner)) ?? ""
     try runProgram(ctx.runner, "chsh", ["-s", shellText])
     return Outcome(status: .done, previousShell: previous.isEmpty ? nil : previous)
 }
