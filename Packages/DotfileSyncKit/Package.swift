@@ -10,10 +10,13 @@ let package = Package(
         .library(name: "Agent", targets: ["Agent"]),
         .library(name: "XPCTransport", targets: ["XPCTransport"]),
         .library(name: "AgentRegistration", targets: ["AgentRegistration"]),
+        .library(name: "CLI", targets: ["CLI"]),
         .executable(name: "dotfilesyncd", targets: ["dotfilesyncd"]),
+        .executable(name: "dotfilesync", targets: ["dotfilesync"]),
     ],
     dependencies: [
         .package(url: "https://github.com/LebJe/TOMLKit.git", from: "0.6.0"),
+        .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.6.0"),
     ],
     targets: [
         .target(
@@ -65,6 +68,23 @@ let package = Package(
         .testTarget(
             name: "AgentRegistrationTests",
             dependencies: ["AgentRegistration"]
+        ),
+        .target(
+            name: "CLI",
+            dependencies: [
+                "Core", "IPC", "XPCTransport", "AgentRegistration",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ]
+        ),
+        .executableTarget(
+            name: "dotfilesync",
+            dependencies: ["CLI"]
+        ),
+        .testTarget(
+            name: "CLITests",
+            // Depends on the executable so `swift build --build-tests` builds it: the standalone
+            // tests spawn the built `dotfilesync`; the agent tests run `CLI` in-process.
+            dependencies: ["CLI", "Core", "IPC", "Agent", "XPCTransport", "AgentRegistration", "dotfilesync"]
         ),
     ],
     swiftLanguageModes: [.v6]
