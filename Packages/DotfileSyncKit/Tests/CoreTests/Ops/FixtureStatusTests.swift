@@ -95,10 +95,8 @@ struct FixtureStatusTests {
     /// machine-specific absolute prefixes are normalised (`<repo>/` removed from `source`,
     /// `<home>` replaced by `~` in `target`) and the result compared with the fixture.
     ///
-    /// The fixture's `local.conf` entry predates the exclusion-first rule: the sample manifest
-    /// lists `~/.config/sample/local.conf` under `[exclusions] paths`, so both Rust and Swift
-    /// report `state: "excluded"` / `"Excluded by manifest rule"` where the fixture says
-    /// `machine_local`. That single entry is patched before comparison; everything else must match.
+    /// The sample manifest lists `~/.config/sample/local.conf` under `[exclusions] paths`, so
+    /// exclusion wins over the machine-local override and it is reported as `excluded`.
     @Test func statusJSONMatchesExampleFixture() throws {
         let repo = try TempDir(), home = try TempDir()
         var report = try Self.fixtureReport(repo: repo, home: home)
@@ -117,17 +115,13 @@ struct FixtureStatusTests {
         #expect(local.diagnostic == "Excluded by manifest rule")
 
         let fixtureText = try String(contentsOf: TestPaths.fixture("example_status_output.json"), encoding: .utf8)
-        let patchedFixture = fixtureText
-            .replacingOccurrences(of: #""state": "machine_local""#, with: #""state": "excluded""#)
-            .replacingOccurrences(of: "Preserved as machine-local override (not modified)",
-                                  with: "Excluded by manifest rule")
 
         let produced = try jsonStringPretty(report)
         // Semantic equality, as JSON values.
         let lhs = try JSONSerialization.jsonObject(with: Data(produced.utf8)) as? NSDictionary
-        let rhs = try JSONSerialization.jsonObject(with: Data(patchedFixture.utf8)) as? NSDictionary
+        let rhs = try JSONSerialization.jsonObject(with: Data(fixtureText.utf8)) as? NSDictionary
         #expect(lhs != nil && lhs == rhs)
         // Byte equality with serde_json pretty output (the fixture file adds a trailing newline).
-        #expect(produced + "\n" == patchedFixture)
+        #expect(produced + "\n" == fixtureText)
     }
 }
