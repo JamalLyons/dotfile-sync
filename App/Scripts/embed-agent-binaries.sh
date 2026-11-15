@@ -52,7 +52,7 @@ mkdir -p "${DEST}"
 for product in dotfilesyncd dotfilesync; do
     # The bundle executable is DotfileSyncApp, not DotfileSync: on a case-insensitive volume
     # Contents/MacOS/DotfileSync and Contents/MacOS/dotfilesync would be the same file.
-    if [[ "${product}" == "${EXECUTABLE_NAME}" ]]; then
+    if [[ "$(printf %s "${product}" | tr "[:upper:]" "[:lower:]")" == "$(printf %s "${EXECUTABLE_NAME}" | tr "[:upper:]" "[:lower:]")" ]]; then
         echo "error: ${product} collides with the app executable" >&2
         exit 1
     fi

@@ -26,4 +26,4 @@ UNMANAGED PACKAGES (installed on system, not declared in manifest) (1):
 
 SKIPPED / MACHINE-LOCAL CONFIGS (1):
   - Target: ~/.config/sample/local.conf
-    Note:   Preserved as machine-local override (not modified)
+    Note:   Excluded by manifest rule
