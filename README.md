@@ -57,6 +57,11 @@ my-shell/
 │   └── functions/
 ├── zed/
 │   └── settings.json     # Global Zed editor settings
+├── dotfilesync.toml      # dotfilesync manifest (see below)
+├── Packages/DotfileSyncKit/  # dotfilesync: SwiftPM package (agent, CLI, core)
+├── App/                  # dotfilesync: SwiftUI app (Xcode project, LaunchAgents plist)
+├── fixtures/             # Golden test inputs shared by the Swift tests
+├── docs/
 └── README.md
 ```
 
@@ -168,164 +173,129 @@ Apache-2.0
 
 ---
 
-## dotfilesync (Rust Environment Manager)
+## dotfilesync (macOS environment manager)
 
-`dotfilesync` is the macOS-first developer environment manager written in Rust, laying the foundation for a future GPUI-based environment manager. `scan` and `status` stay read-only. `plan` and `apply` change the machine only after you review a plan. `import-brewfile` creates a new manifest and refuses to overwrite an existing file.
+`dotfilesync` is a macOS-native developer environment manager written in Swift. It compares `dotfilesync.toml` with the machine and, after you review and approve a plan, brings the machine in line. `scan` and `status` stay read-only. `plan` and `apply` change the machine only after you review a plan. `import-brewfile` creates a new manifest and refuses to overwrite an existing file.
 
 Manifest profiles and the plan/apply workflow are documented in [docs/manifest.md](docs/manifest.md) and [docs/plan-apply.md](docs/plan-apply.md). `setup.sh` remains until that workflow covers the same ground.
 
 ### Architecture
 
-- **`dotfilesync-core`**: Reusable domain models, manifest schema validation, command runner abstraction with timeout protection, static Brewfile parser, filesystem inspection, and diff comparison engine. Completely UI-framework agnostic.
-- **`dotfilesync-protocol`**: Typed, versioned local IPC protocol and blocking client shared by the CLI and the future GPUI app.
-- **`dotfilesync-daemon`**: The per-user daemon `dotfilesyncd`. It hosts the core behind an owner-only Unix socket (no TCP) and manages jobs, locks, a job journal, rotated logs, and the launchd LaunchAgent.
-- **`dotfilesync-cli`**: Command-line binary (`dotfilesync`) providing human-friendly and `--json` structured output. It is a client of the daemon, with a standalone fallback.
+The install unit is `DotfileSync.app`. It embeds the per-user agent `dotfilesyncd`, the `dotfilesync` CLI, and the agent's launchd definition.
 
-See [docs/daemon-architecture.md](docs/daemon-architecture.md) for the process, protocol, security and state model.
-
-### Toolchain and Building
-
-Requires **macOS** and **Rust 1.85+** (MSRV 1.85). The `dotfilesync` and `dotfilesyncd` binaries are built exclusively for macOS; building them on Linux or Windows is prevented at compile time. The `dotfilesync-core` and `dotfilesync-protocol` libraries compile on any Unix, as groundwork for the headless Linux target (#12).
-
-```bash
-# Build the workspace
-cargo build --workspace
-
-# Run tests (fully fixture-isolated)
-cargo test --workspace
-
-# Check formatting and clippy
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-```
-
-### CLI Commands
-
-Commands `scan` and `status` are strictly **read-only**. They never install software, uninstall packages, modify shell or environment files, or mutate system configurations. `import-brewfile --output <path>` creates a **new** file and refuses to replace an existing one. `plan` and `apply` are the commands that change the machine; see [Plan and apply](#plan-and-apply).
-
-#### 1. Scan (`dotfilesync scan`)
-Strictly read-only: discovers installed Homebrew formulae and casks, their observed versions, and inspects only explicitly tracked configuration paths without altering system state.
-
-```bash
-# Human-readable output using default dotfilesync.toml if present
-cargo run -p dotfilesync-cli -- scan
-
-# Structured JSON output
-cargo run -p dotfilesync-cli -- scan --manifest dotfilesync.toml --json
-```
-
-#### 2. Status (`dotfilesync status --manifest <path>`)
-Strictly read-only: compares the desired state defined in a versioned manifest against the observed system state without making any modifications.
-
-```bash
-cargo run -p dotfilesync-cli -- status --manifest dotfilesync.toml
-
-# JSON output
-cargo run -p dotfilesync-cli -- status --manifest dotfilesync.toml --json
-```
-
-Differences are classified into:
-- **`matching`**: Reserved strictly for verified equivalence between repository source and machine target under the comparison policy.
-- **`missing`**: Declared in the manifest but absent from the machine. (Absent machine-local overrides are clearly distinguished in human-readable output from ordinary missing managed configs that require restoration from repository templates).
-- **`changed`**: Config file drift detected (content/hash differs between repository template and machine).
-- **`unmanaged`**: Present on the machine but not declared in the manifest (unmanaged does *not* mean unwanted).
-- **`unknown`**: Diagnostic recorded if Homebrew is unavailable or package enumeration failed (ensures an unavailable tool never falsely claims all packages are missing), or if a config file is unreadable.
-- **`skipped`**: Explicitly excluded or machine-local override files. These are preserved and never counted as matching content.
-
-#### 3. Static Brewfile Import (`dotfilesync import-brewfile`)
-Statically parses a Brewfile without executing Ruby code (prohibits arbitrary code execution). Straightforward `brew` and `cask` declarations are captured, while options and dynamic Ruby constructs (`if`, `unless`, `def`, `system`, `ENV`, string interpolation, `mas`, `tap`, trailing expressions) are explicitly reported with line numbers.
-
-When `--output <path>` is provided, `dotfilesync` explicitly creates a **new** manifest file using atomic filesystem semantics (`create_new`). It strictly **refuses to replace or overwrite** an existing manifest file, preserving existing file bytes, mappings, and exclusions untouched.
-
-```bash
-# Parse existing Brewfile and generate a new manifest skeleton
-cargo run -p dotfilesync-cli -- import-brewfile --brewfile Brewfile --output dotfilesync.new.toml
-```
-
-### Plan and apply
-
-`dotfilesync plan` prints the actions that would bring this machine in line with `dotfilesync.toml`. `dotfilesync apply` reviews that plan and, after you confirm, runs it through the daemon. A converged machine produces an empty plan.
-
-```bash
-dotfilesync plan [--manifest] [--profile] [--json]
-dotfilesync apply [--profile] [--yes] [--allow-sudo] [--dry-run]
-dotfilesync apply --resume <run_id>
-dotfilesync runs [list|show <id>]
-```
-
-`scan` and `status` stay read-only. Apply never uses `sudo` unless you pass `--allow-sudo`, and it does not overwrite `local.fish` or other machine overrides. Details, including which actions can be undone, are in [docs/plan-apply.md](docs/plan-apply.md). The manifest schema, profiles, and merge order are in [docs/manifest.md](docs/manifest.md).
-
-### Daemon (`dotfilesyncd`) and service management
-
-`scan` and `status` take `--mode auto|daemon|standalone` (default `auto`):
-
-| Mode | Behavior |
-|---|---|
-| `auto` | Runs in `dotfilesyncd` when it is running. Otherwise runs in-process and prints a one-line note on stderr. |
-| `daemon` | Requires the daemon. Add `--detach` to print the job ID and return immediately. |
-| `standalone` | Never contacts the daemon. |
-
-The report on stdout is the same in every mode. Neither command ever installs, loads or starts the service.
-
-Daemon jobs keep running when the CLI exits (Ctrl-C only detaches). Reconnect from any terminal:
-
-```bash
-dotfilesync jobs list
-dotfilesync jobs watch <job-id>     # progress since the start, then waits
-dotfilesync jobs result <job-id> --json
-dotfilesync jobs cancel <job-id>    # also stops the job's brew subprocess
-```
-
-First-time setup on a Mac:
-
-```bash
-cargo build --release --workspace
-# 1. Write ~/Library/LaunchAgents/io.github.jamallyons.dotfilesyncd.plist (does NOT start anything).
-#    Add --start-at-login to opt in to automatic start at login.
-./target/release/dotfilesync service install
-# 2. Load and start it now.
-./target/release/dotfilesync service start
-# 3. Inspect: installed? loaded in launchd? reachable?
-./target/release/dotfilesync service status
-# Stop for this session (stays installed), or remove the definition.
-./target/release/dotfilesync service stop
-./target/release/dotfilesync service uninstall   # keeps state/logs, configs and repos
-```
-
-You can also run the daemon in the foreground with `./target/release/dotfilesyncd`.
-
-The daemon keeps its state in `~/Library/Application Support/dotfilesync`, which must be mode 0700. You can override the location with `--data-dir` or `DOTFILESYNC_DATA_DIR`. It contains:
+- **`dotfilesyncd`**: per-user launch agent, registered with `SMAppService.agent` (it shows in System Settings › General › Login Items) and started on demand by launchd. It serves XPC on the Mach service `com.jamallyons.dotfilesync.agent`, accepts only peers signed by the same team and running as the same user, and owns jobs, locks, single-use approvals, run history, backups and logs. Nothing listens on the network.
+- **`dotfilesync`**: CLI with human and `--json` output. An XPC client of the agent, with a standalone fallback for `scan`, `status` and `plan`. `apply` always goes through the agent.
+- **DotfileSync.app**: SwiftUI front end. It asks for Touch ID before applying a plan.
 
 | Path | Contents |
 |---|---|
-| `run/` | Socket and lock file |
+| `Packages/DotfileSyncKit/Sources/Core` | Manifest, profiles, Brewfile parser, brew discovery, scan, status, plan, apply, journal, `clonefile` backups |
+| `Packages/DotfileSyncKit/Sources/IPC` | Codable request/response types, data-dir layout |
+| `Packages/DotfileSyncKit/Sources/Agent` | Jobs, locks, approvals, run history, logs |
+| `Packages/DotfileSyncKit/Sources/XPCTransport` | XPC listener and client |
+| `Packages/DotfileSyncKit/Sources/AgentRegistration` | SMAppService registration |
+| `Packages/DotfileSyncKit/Sources/CLI` | `dotfilesync` commands (swift-argument-parser) |
+| `App/` | Xcode project, SwiftUI app, `LaunchAgents/com.jamallyons.dotfilesync.agent.plist` |
+
+See [docs/daemon-architecture.md](docs/daemon-architecture.md) for the process, XPC, security and state model.
+
+### Building
+
+Requires **macOS 26** and Xcode with Swift 6.2.
+
+```bash
+# Package: build and run the tests (fixture-isolated; never touches your HOME or launchd)
+cd Packages/DotfileSyncKit
+swift build --build-tests
+swift test
+
+# App (unsigned build, as in CI)
+xcodebuild -project App/DotfileSync.xcodeproj -scheme DotfileSync \
+  -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build test
+```
+
+The agent's peer check needs a signed app with a team ID; see [docs/daemon-manual-qa.md](docs/daemon-manual-qa.md) for building and testing a signed app. For a quick local try of the read-only commands, the package build is enough:
+
+```bash
+cd Packages/DotfileSyncKit
+swift run dotfilesync status --manifest ../../dotfilesync.toml --mode standalone
+```
+
+### CLI commands
+
+`scan` and `status` are strictly **read-only**. They never install software, uninstall packages, modify shell or environment files, or change system settings. `import-brewfile --output <path>` creates a **new** file and refuses to replace an existing one. `plan` and `apply` are the commands that change the machine.
+
+```bash
+dotfilesync scan [--manifest dotfilesync.toml] [--json]
+dotfilesync status --manifest dotfilesync.toml [--json]
+dotfilesync import-brewfile --brewfile Brewfile --output dotfilesync.new.toml
+dotfilesync plan [--manifest] [--profile NAME] [--json]
+dotfilesync apply [--manifest] [--profile NAME] [--yes] [--allow-sudo] [--dry-run]
+dotfilesync apply --resume <run_id>
+dotfilesync runs [list|show <id>]
+dotfilesync jobs list|show|watch|result|cancel   # `jobs follow` = `jobs watch`
+dotfilesync service install|uninstall|start|stop|status|open-settings
+```
+
+`status` classifies each difference:
+
+- **`matching`**: verified equivalence between repository source and machine target.
+- **`missing`**: declared in the manifest but absent from the machine. An absent machine-local override is shown separately from an ordinary missing config.
+- **`changed`**: config drift (the content hash differs).
+- **`unmanaged`**: present on the machine but not declared in the manifest (not the same as unwanted).
+- **`unknown`**: Homebrew is unavailable or enumeration failed (so an unavailable tool never claims every package is missing), or a config file is unreadable.
+- **`skipped`**: excluded paths and machine-local overrides. They are preserved and never counted as matching.
+
+`import-brewfile` parses a Brewfile statically, without running Ruby. Plain `brew` and `cask` lines are captured; options and dynamic constructs (`if`, `unless`, `def`, `system`, `ENV`, interpolation, `mas`, `tap`, trailing expressions) are reported with line numbers.
+
+`scan`, `status` and `plan` take `--mode auto|daemon|standalone` (`agent` is a synonym for `daemon`):
+
+| Mode | Behavior |
+|---|---|
+| `auto` | Runs in the agent when it answers. Otherwise runs in-process and prints a one-line note on stderr. |
+| `daemon` | Requires the agent. Add `--detach` to print the job ID and return. |
+| `standalone` | Never contacts the agent. |
+
+Agent jobs keep running when the CLI exits (Ctrl-C only detaches). Reconnect from any terminal with `dotfilesync jobs watch <job-id>`.
+
+### Agent setup
+
+```bash
+dotfilesync service install        # register with SMAppService; starts nothing
+dotfilesync service open-settings  # allow DotfileSync in Login Items if status says so
+dotfilesync service status         # registration state + whether the agent answers
+dotfilesync service stop           # shut down now; launchd restarts it on the next request
+dotfilesync service uninstall      # unregister; keeps state, logs, configs and repos
+```
+
+Run these with the `dotfilesync` inside the installed app (`DotfileSync.app/Contents/MacOS/dotfilesync`); outside the app bundle the status is `not_found`.
+
+The agent keeps its state in `~/Library/Application Support/dotfilesync` (mode 0700; override with `--data-dir` or `DOTFILESYNC_DATA_DIR`):
+
+| Path | Contents |
+|---|---|
 | `state/jobs.jsonl` | Job metadata only |
+| `state/runs/<run_id>/` | Apply journal and plan copy |
+| `backups/<run_id>/` | Files replaced by that run (APFS clones) |
 | `logs/` | Rotated, redacted logs |
 
-A manual QA checklist is in [docs/daemon-manual-qa.md](docs/daemon-manual-qa.md).
+### Manifest (`dotfilesync.toml`)
 
-### Manifest Schema (`dotfilesync.toml`)
+The repository includes a versioned `dotfilesync.toml` (schema version 1) modeling the current `Brewfile`, `fish/` configuration and `zed/settings.json`, plus `personal` and `work` profiles. Reference: [docs/manifest.md](docs/manifest.md).
 
-The repository includes a versioned `dotfilesync.toml` (schema version 1) modeling the current `Brewfile`, `fish/` configuration, and `zed/settings.json`, plus `personal` and `work` profiles. The schema reference is [docs/manifest.md](docs/manifest.md).
+- **Explicit tracking**: separate repository `source` and machine `target` paths.
+- **Exclusions**: explicit paths and glob patterns (`*.backup.*`, `*.key`, `*secret*`, `*credential*`) are left out of drift checks.
+- **Machine-local overrides**: files like `~/.config/fish/conf.d/local.fish` are preserved and never overwritten.
+- **Credential protection**: validation refuses to track sensitive paths like `~/.ssh/id_*`, `~/.aws/credentials` or `~/.gnupg`.
 
-Key capabilities:
-- **Explicit Tracking**: Separate repository `source` and machine `target` paths (e.g. `~/.config/fish/config.fish`).
-- **Exclusions**: Explicit paths and glob patterns (`*.backup.*`, `*.key`, `*secret*`, `*credential*`) are excluded from drift checks.
-- **Machine-Local Overrides**: Files like `~/.config/fish/conf.d/local.fish` are recognized as machine-local and preserved without drift warnings or overwrite risks.
-- **Credential Protection**: Strict validation prevents tracking sensitive paths like `~/.ssh/id_*`, `~/.aws/credentials`, or `~/.gnupg`.
+### Safety
 
-### Existing Behaviors Preserved
+- `scan` and `status` are read-only and never print file contents. `import-brewfile` writes only with `--output`, and only a new file.
+- `apply` runs only a reviewed, approved plan. Approvals are single-use tokens bound to the plan digest and observed state, with a 10-minute lifetime. It backs up every file it replaces, refuses to overwrite local overrides, and never runs `sudo` unless `--allow-sudo` is set.
+- Tests run against temp directories, fake `brew` and a fake SMAppService backend; they never touch your HOME, your data directory or launchd.
 
-- **Bash Installer (`setup.sh`)**: The existing Bash bootstrapper, `Brewfile`, and helper scripts in `lib/` remain fully operational until plan/apply covers the same steps. See the parity matrix in [docs/plan-apply.md](docs/plan-apply.md).
-- **Safety First**: `scan` and `status` are read-only. `import-brewfile` writes only when `--output` is supplied, and then only creates a new file. `apply` is the mutating command: it installs and copies only the reviewed plan, backs up files it replaces, refuses to overwrite local overrides, and does not call `sudo` unless `--allow-sudo` is set. File contents are never printed in scan or status output.
-- **Test Isolation**: All discovery and runner mechanisms are abstracted behind traits with unit fixtures and mock outputs, preventing tests from modifying or relying on actual machine state.
+### Current limitations
 
-### Current Limitations
-
-- **Inspection stays read-only**: `scan` and `status` never install packages or copy files. `import-brewfile` creates a new manifest skeleton only when `--output` is passed and refuses to overwrite an existing file. Machine changes go through `plan` / `apply`.
-- **No GUI**: GPUI interface integration is slated for future milestones.
-- **Daemon scope**: The daemon serves `scan`, `status`, and plan/apply jobs. `apply` requires the daemon. Toolchains beyond Homebrew, config editing, sync, and the watcher are still out of scope. It has no crash auto-restart (no launchd `KeepAlive`), and it supports no Linux service yet.
-- **Still on `setup.sh`**: Node via fnm and pnpm, the latest Xcode install, and LM Studio model downloads are not plan actions yet (issue #5).
-- **No Remote Git Sync**: Future state sync will use a dedicated user-owned private state repository rather than personal branches in this repo.
-- **Language Managers**: Integrations for `fnm`, `nvm`, and Java manager diagnostics will be introduced in subsequent milestones.
-
+- **Still on `setup.sh`**: installing Homebrew itself, Node via fnm and pnpm, the latest Xcode and LM Studio models are not plan actions yet (issue #5).
+- **Out of scope for now**: toolchains beyond Homebrew, config editing, state sync, the FSEvents watcher, a privileged helper for `sudo` steps, and crash auto-restart (no `KeepAlive`).
+- **macOS only**: XPC and SMAppService exist only on macOS; there is no Linux build.
