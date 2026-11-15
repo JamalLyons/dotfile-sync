@@ -128,7 +128,12 @@ struct JournalBackupTests {
         do {
             _ = try JournalStore.open(runDir: runDir).load()
             Issue.record("expected invalid line")
-        } catch let ApplyError.journal(message) {
+        } catch {
+            // Not `catch let ApplyError.journal(…)`: crashes the Xcode 26 SIL ownership verifier.
+            guard case let .journal(message) = error else {
+                Issue.record("unexpected error: \(error)")
+                return
+            }
             #expect(message.hasPrefix("invalid journal line 1: "))
         }
         // A second apply into the same run dir must refuse to start over.
@@ -147,7 +152,12 @@ struct JournalBackupTests {
         do {
             _ = try applyPlan(Self.brewPlan(), context: ctx, isCancelled: { true })
             Issue.record("expected cancellation")
-        } catch let ApplyError.cancelled(journal) {
+        } catch {
+            // Not `catch let ApplyError.cancelled(…)`: crashes the Xcode 26 SIL ownership verifier.
+            guard case let .cancelled(journal) = error else {
+                Issue.record("unexpected error: \(error)")
+                return
+            }
             #expect(journal.steps.map(\.status) == [.pending, .pending, .pending])
             #expect(journal.planDigest == Self.rustDigest)
         }

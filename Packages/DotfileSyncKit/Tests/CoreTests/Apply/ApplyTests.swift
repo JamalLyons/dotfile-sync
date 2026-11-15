@@ -126,7 +126,12 @@ struct ApplyTests {
         do {
             _ = try applyPlan(plan, context: ctx)
             Issue.record("expected step failure")
-        } catch let ApplyError.stepFailed(actionId, _, journal) {
+        } catch {
+            // Not `catch let ApplyError.stepFailed(…)`: crashes the Xcode 26 SIL ownership verifier.
+            guard case let .stepFailed(actionId, _, journal) = error else {
+                Issue.record("unexpected error: \(error)")
+                return
+            }
             #expect(actionId == "a-003")
             #expect(journal.steps[0].status == .done)
             #expect(journal.steps[1].status == .done)
@@ -267,7 +272,12 @@ struct ApplyTests {
         do {
             _ = try applyPlan(plan, context: ctx)
             Issue.record("expected a failed step")
-        } catch let ApplyError.stepFailed(_, message, journal) {
+        } catch {
+            // Not `catch let ApplyError.stepFailed(…)`: crashes the Xcode 26 SIL ownership verifier.
+            guard case let .stepFailed(_, message, journal) = error else {
+                Issue.record("unexpected error: \(error)")
+                return
+            }
             #expect(message.contains("requires sudo; rerun with --allow-sudo"), "\(message)")
             #expect(journal.steps[0].status == .failed)
             #expect(journal.steps[0].error == "requires sudo; rerun with --allow-sudo")

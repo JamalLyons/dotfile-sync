@@ -122,6 +122,13 @@ final class Env {
         exit \(fallthroughCode)
 
         """)
+        // The planner hashes the login shell into the state fingerprint; the real `dscl`
+        // occasionally fails under parallel test load, which made plans differ run to run.
+        try writeScript(bin.appending("dscl"), """
+        #!/bin/sh
+        echo "UserShell: /bin/zsh"
+
+        """)
     }
 
     deinit {

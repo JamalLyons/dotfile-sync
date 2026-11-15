@@ -143,8 +143,13 @@ private func json(_ s: String) -> Data { Data(s.utf8) }
         do {
             _ = try env2.start()
             Issue.record("symlinked data dir accepted")
-        } catch let AgentError.path(error) {
-            #expect(error == .symlink(path: env2.layout.root))
+        } catch let error as AgentError {
+            // Not `catch let AgentError.path(…)`: crashes the Xcode 26 SIL ownership verifier.
+            guard case let .path(pathError) = error else {
+                Issue.record("unexpected error: \(error)")
+                return
+            }
+            #expect(pathError == .symlink(path: env2.layout.root))
         }
     }
 
