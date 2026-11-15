@@ -192,6 +192,10 @@ The SwiftUI app asks for Touch ID (`LocalAuthentication`) before it requests an 
 applies a plan. The gate runs in the app process; the agent's token contract is the same for the
 app and the CLI. The CLI confirms with a `[y/N]` prompt on a TTY, or `--yes`.
 
+The gate is a user-presence confirmation in the app UI, not an agent-enforced control: any
+same-team-signed peer running as the user (including the embedded CLI with `--yes`) can obtain
+an approval token without Touch ID. Enforcing presence in the agent is a follow-up.
+
 ## 8. Apply, journal and backups
 
 - Each step transition is fsynced to `<data>/state/runs/<run_id>/journal.jsonl`. A run whose steps

@@ -49,6 +49,8 @@ spm --product dotfilesync
 BIN_DIR="$(spm --show-bin-path)"
 
 mkdir -p "${DEST}"
+# Notarization needs a secure timestamp on every Mach-O; skip the network round trip in Debug.
+if [[ "${CONFIGURATION:-Debug}" == "Release" ]]; then TIMESTAMP_FLAG="--timestamp"; else TIMESTAMP_FLAG="--timestamp=none"; fi
 for product in dotfilesyncd dotfilesync; do
     # The bundle executable is DotfileSyncApp, not DotfileSync: on a case-insensitive volume
     # Contents/MacOS/DotfileSync and Contents/MacOS/dotfilesync would be the same file.
@@ -58,7 +60,7 @@ for product in dotfilesyncd dotfilesync; do
     fi
     /usr/bin/ditto "${BIN_DIR}/${product}" "${DEST}/${product}"
     if [[ "${CODE_SIGNING_ALLOWED:-YES}" == "YES" && -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]]; then
-        /usr/bin/codesign --force --options runtime --timestamp=none \
+        /usr/bin/codesign --force --options runtime "${TIMESTAMP_FLAG}" \
             --sign "${EXPANDED_CODE_SIGN_IDENTITY}" \
             --identifier "com.jamallyons.dotfilesync.${product}" \
             "${DEST}/${product}"

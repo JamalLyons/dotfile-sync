@@ -71,7 +71,9 @@ func parseOptions() -> Options {
         case "--data-dir": options.dataDir = FilePath(value(arg))
         case "--brew-bin": options.brewBin = FilePath(value(arg))
         case "--mach-service": options.machService = value(arg)
+        #if DEBUG
         case "--insecure-any-signer": options.anySigner = true
+        #endif
         case "--dev-stdio": options.devStdio = true
         case "-V", "--version":
             print("dotfilesyncd \(AGENT_VERSION)")
