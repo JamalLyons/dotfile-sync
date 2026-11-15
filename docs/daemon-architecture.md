@@ -82,8 +82,10 @@ Every message is authenticated twice:
    from a different UID, the client fails with `impostorAgent`, and a reply whose sender UID
    cannot be read is refused rather than trusted.
 
-Before connecting, the client also checks (without creating or repairing) that the data
-directories are private (§4). A missing data dir means the agent has never run.
+Before connecting, the client also checks (without creating or repairing) that any existing
+data directories are private (§4). A missing data dir is not an error: looking up the Mach
+service is what makes launchd start the agent, and the agent creates the directory on its
+first run.
 
 ## 4. Data layout
 

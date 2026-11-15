@@ -71,10 +71,24 @@ final class FakeBackend: AgentServiceBackend {
         }
     }
 
+    // SMAppService reports `notFound` for an agent that was never registered, even when the plist
+    // is in the bundle, so register is still attempted and succeeds.
+    @Test func registerFromNotFoundStatusStillRegisters() throws {
+        let fake = FakeBackend(.notFound)
+        let reg = AgentRegistration(backend: fake)
+        #expect(try reg.register() == .registered)
+        #expect(fake.calls == ["register"])
+        #expect(reg.status == .enabled)
+    }
+
     // Ports start_requires_install_then_bootstraps_and_kickstarts: without the definition in
     // the bundle there is nothing to register, and the error says why.
     @Test func registerWithoutBundledPlistFailsClearly() {
         let fake = FakeBackend(.notFound)
+        fake.state.withLock {
+            $0.failNext = "Invalid argument"
+            $0.registerLandsIn = .notFound
+        }
         let reg = AgentRegistration(backend: fake)
         do {
             _ = try reg.register()
@@ -82,8 +96,9 @@ final class FakeBackend: AgentServiceBackend {
         } catch {
             #expect(error.status == .notFound)
             #expect(error.description.contains("not in the app bundle"))
+            #expect(error.description.contains("Invalid argument"))
         }
-        #expect(fake.calls.isEmpty)
+        #expect(fake.calls == ["register"])
     }
 
     @Test func registerNeedingApprovalIsReported() throws {

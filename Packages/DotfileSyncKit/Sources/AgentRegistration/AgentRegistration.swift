@@ -74,7 +74,9 @@ public protocol AgentRegistering: Sendable {
 
 /// Idempotent registration on top of a backend.
 ///
-/// - `register()` is a no-op when already `enabled` or `requiresApproval`.
+/// - `register()` is a no-op when already `enabled` or `requiresApproval`. `notFound` is not
+///   trusted: SMAppService also reports it for an agent that was never registered, so the
+///   register call is still made and its own error is reported if the plist really is missing.
 /// - `unregister()` is a no-op when `notRegistered`/`notFound`. It only removes the launchd
 ///   registration: the data directory (state, logs, backups) and the user's dotfiles are never
 ///   touched.
@@ -97,18 +99,20 @@ public struct AgentRegistration: AgentRegistering {
         switch backend.status {
         case .enabled, .requiresApproval:
             return .alreadyRegistered
-        case .notFound:
-            throw AgentRegistrationError(
-                "the agent's launchd definition is not in the app bundle; run dotfilesync from the installed app",
-                status: .notFound
-            )
-        case .notRegistered:
+        case .notFound, .notRegistered:
             break
         }
         do {
             try backend.register()
         } catch {
-            throw AgentRegistrationError("cannot register the agent: \(error.localizedDescription)", status: backend.status)
+            let status = backend.status
+            if status == .notFound {
+                throw AgentRegistrationError(
+                    "the agent's launchd definition is not in the app bundle; run dotfilesync from the installed app (\(error.localizedDescription))",
+                    status: .notFound
+                )
+            }
+            throw AgentRegistrationError("cannot register the agent: \(error.localizedDescription)", status: status)
         }
         return .registered
     }

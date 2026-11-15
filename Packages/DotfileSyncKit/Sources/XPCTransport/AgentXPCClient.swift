@@ -54,10 +54,11 @@ public final class AgentXPCClient: Sendable {
 
     /// Connects to the agent's launchd Mach service.
     ///
-    /// Like the Rust client, first verifies (never creates or repairs) the data directories:
-    /// a missing root or state dir means the agent never ran (``AgentXPCClientError/notRunning(reason:)``);
-    /// a symlinked, foreign-owned or group/other-accessible one is refused
-    /// (``AgentXPCClientError/dataDir(_:)``).
+    /// First verifies (never creates or repairs) the data directories: a symlinked,
+    /// foreign-owned or group/other-accessible one is refused (``AgentXPCClientError/dataDir(_:)``).
+    /// A missing one is fine: the Mach service lookup is what makes launchd start the agent, and
+    /// the agent creates the directories on its first run. Whether an agent answers is decided
+    /// by the connection, not by the directory.
     public convenience init(
         machService: String = AGENT_MACH_SERVICE,
         layout: DataLayout
@@ -102,17 +103,13 @@ public final class AgentXPCClient: Sendable {
         session.cancel(reason: "client closed")
     }
 
-    /// Verifies the data directories without creating them.
+    /// Verifies the data directories that exist, without creating any.
     public static func checkDataDirs(_ layout: DataLayout) throws(AgentXPCClientError) {
         for dir in [layout.root, layout.stateDir] {
-            let state: DirState
             do {
-                state = try checkPrivateDir(dir)
+                _ = try checkPrivateDir(dir)
             } catch {
                 throw .dataDir(error)
-            }
-            if state == .missing {
-                throw .notRunning(reason: "data directory does not exist")
             }
         }
     }

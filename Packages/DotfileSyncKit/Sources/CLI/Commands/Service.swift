@@ -195,7 +195,9 @@ func describe(_ status: AgentRegistrationStatus) -> String {
     case .notRegistered: return "not registered"
     case .enabled: return "registered and enabled"
     case .requiresApproval: return "registered, waiting for approval"
-    case .notFound: return "not found in the app bundle"
+    // SMAppService also says notFound before the first registration, so this is not proof
+    // that the plist is missing.
+    case .notFound: return "not registered (launchd has no record of it)"
     }
 }
 
@@ -203,7 +205,7 @@ func statusHint(_ status: AgentRegistrationStatus) -> String {
     switch status {
     case .notRegistered: return "run `dotfilesync service install`"
     case .requiresApproval: return "allow it in System Settings → General → Login Items (`dotfilesync service open-settings`)"
-    case .notFound: return "run dotfilesync from the installed app so its launchd definition can be found"
+    case .notFound: return "run `dotfilesync service install` from the installed app (DotfileSync.app/Contents/MacOS/dotfilesync)"
     case .enabled: return "launchd starts it on demand"
     }
 }

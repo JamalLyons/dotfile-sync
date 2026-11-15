@@ -416,7 +416,8 @@ public final class JobManager: Sendable {
     }
 
     private func complete(_ job: Job, _ status: JobStatus, output: JobOutput? = nil, error: JobError? = nil) {
-        job.finish(status, output: output, error: error)
+        // Journal first: waiters (shutdown, watches) wake on `finish`, and the process may exit
+        // right after, so the terminal record must already be on disk.
         if let ev = JournalEvent.from(status: status) {
             do {
                 try journal.append(jobId: job.id, kind: job.kind, event: ev)
@@ -424,6 +425,7 @@ public final class JobManager: Sendable {
                 log.warn("journal append failed for job \(job.id): \(error)")
             }
         }
+        job.finish(status, output: output, error: error)
         log.info("job \(job.id) kind=\(job.kind) finished status=\(status)")
     }
 

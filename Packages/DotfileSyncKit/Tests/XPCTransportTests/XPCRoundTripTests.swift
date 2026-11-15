@@ -253,14 +253,10 @@ private func errorOf(_ outcome: Outcome) -> ProtocolError? {
     // Client half of ipc_security_tests `refuses_permissive_or_symlinked_data_dir_and_client_refuses_too`.
     @Test func clientRefusesPermissiveOrSymlinkedDataDir() throws {
         let env = try Env(.fast)
-        // Missing: not running (never created by the client).
-        #expect(throws: AgentXPCClientError.self) { try AgentXPCClient.checkDataDirs(env.layout) }
+        // Missing is accepted (launchd starts the agent, which creates it) and never created
+        // by the client.
+        try AgentXPCClient.checkDataDirs(env.layout)
         #expect((try? checkPrivateDir(env.layout.root)) == .missing)
-        do {
-            try AgentXPCClient.checkDataDirs(env.layout)
-        } catch {
-            #expect(error.isNotRunning)
-        }
 
         try env.layout.ensurePrivateDirs()
         try AgentXPCClient.checkDataDirs(env.layout)
