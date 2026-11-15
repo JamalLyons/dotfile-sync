@@ -29,6 +29,8 @@ public struct AgentConfig: Sendable {
     public var heartbeatInterval: Duration
     /// The user this agent serves. Requests from any other UID are refused.
     public var ownerUid: UInt32
+    /// Asked before every approval token is issued (Touch ID or the login password).
+    public var presence: any UserPresenceVerifier
 
     public init(
         layout: DataLayout,
@@ -38,7 +40,8 @@ public struct AgentConfig: Sendable {
         logKeep: Int = 3,
         shutdownGrace: Duration = .seconds(5),
         heartbeatInterval: Duration = .seconds(5),
-        ownerUid: UInt32 = geteuid()
+        ownerUid: UInt32 = geteuid(),
+        presence: any UserPresenceVerifier = LocalAuthenticationPresence()
     ) {
         self.layout = layout
         self.brewBin = brewBin
@@ -48,6 +51,7 @@ public struct AgentConfig: Sendable {
         self.shutdownGrace = shutdownGrace
         self.heartbeatInterval = heartbeatInterval
         self.ownerUid = ownerUid
+        self.presence = presence
     }
 }
 
@@ -76,6 +80,7 @@ public final class AgentService: Sendable {
     private let started = ContinuousClock.now
     private let shutdownRequested = Monitor(false)
     private let stopped = Mutex<Int?>(nil)
+    private let activeWatches = Atomic<Int>(0)
 
     /// Prepares private directories, opens the log, recovers the job journal and run history.
     public init(config: AgentConfig) throws(AgentError) {
@@ -110,7 +115,8 @@ public final class AgentService: Sendable {
             brewBin: config.brewBin,
             limits: config.jobs,
             recovered: recovery.jobs,
-            paths: JobPaths(runsDir: layout.runsDir, backupsDir: layout.backupsDir, ownerUid: config.ownerUid)
+            paths: JobPaths(runsDir: layout.runsDir, backupsDir: layout.backupsDir, ownerUid: config.ownerUid),
+            presence: config.presence
         )
         self.config = config
         self.log = log
@@ -182,6 +188,12 @@ public final class AgentService: Sendable {
         } catch {
             return .err(error)
         }
+        let limit = config.jobs.maxWatches
+        if activeWatches.wrappingAdd(1, ordering: .relaxed).oldValue >= limit {
+            activeWatches.subtract(1, ordering: .relaxed)
+            return .err(ProtocolError(.busy, "too many jobs are being watched (limit \(limit)); stop a watch and try again"))
+        }
+        defer { activeWatches.subtract(1, ordering: .relaxed) }
         var since = sinceSeq
         while true {
             let batch = job.wait(since: since, timeout: config.heartbeatInterval)

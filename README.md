@@ -183,9 +183,9 @@ Manifest profiles and the plan/apply workflow are documented in [docs/manifest.m
 
 The install unit is `DotfileSync.app`. It embeds the per-user agent `dotfilesyncd`, the `dotfilesync` CLI, and the agent's launchd definition.
 
-- **`dotfilesyncd`**: per-user launch agent, registered with `SMAppService.agent` (it shows in System Settings › General › Login Items) and started on demand by launchd. It serves XPC on the Mach service `com.jamallyons.dotfilesync.agent`, accepts only peers signed by the same team and running as the same user, and owns jobs, locks, single-use approvals, run history, backups and logs. Nothing listens on the network.
+- **`dotfilesyncd`**: per-user launch agent, registered with `SMAppService.agent` (it shows in System Settings › General › Login Items) and started on demand by launchd. It serves XPC on the Mach service `com.jamallyons.dotfilesync.agent`, accepts only the app and CLI (same team, pinned signing identifiers) running as the same user, asks for Touch ID before it approves an apply, and owns jobs, locks, single-use approvals, run history, backups and logs. Nothing listens on the network.
 - **`dotfilesync`**: CLI with human and `--json` output. An XPC client of the agent, with a standalone fallback for `scan`, `status` and `plan`. `apply` always goes through the agent.
-- **DotfileSync.app**: SwiftUI front end. It asks for Touch ID before applying a plan.
+- **DotfileSync.app**: SwiftUI front end for scan, status, plan and apply.
 
 | Path | Contents |
 |---|---|

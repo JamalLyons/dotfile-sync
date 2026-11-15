@@ -9,7 +9,7 @@ import IPC
 import System
 import Testing
 
-private func scanSpec(_ env: Env) -> JobSpec {
+func scanSpec(_ env: Env) -> JobSpec {
     .scan(ScanInput(manifest: nil, home: env.home, repoRoot: nil, profile: nil))
 }
 

@@ -12,31 +12,47 @@ import Darwin
 import Dispatch
 import Foundation
 import IPC
+import LightweightCodeRequirements
 import Synchronization
 import XPC
 
+/// Signing identifiers of the processes allowed to talk to the agent: the app (its bundle
+/// identifier) and the embedded CLI (`--identifier` in App/Scripts/embed-agent-binaries.sh).
+public let AGENT_CLIENT_SIGNING_IDENTIFIERS = ["com.jamallyons.dotfilesync", "com.jamallyons.dotfilesync.dotfilesync"]
+
 /// Which code-signing requirement a connecting process must satisfy.
 public enum PeerRequirementPolicy: Sendable, Equatable, CustomStringConvertible {
-    /// Shipping default: the peer must be signed by the same team as the agent, and (if given)
-    /// carry exactly `signingIdentifier`. App, agent and CLI are signed by one Developer ID team.
-    case sameTeam(signingIdentifier: String? = nil)
+    /// Shipping default: the peer must be signed by the same team as the agent and carry one of
+    /// `signingIdentifiers`. Another program signed by the same team is refused.
+    case sameTeam(signingIdentifiers: [String] = AGENT_CLIENT_SIGNING_IDENTIFIERS)
     /// Development/testing only (explicit opt-in): no code-signing check. Ad-hoc-signed local
-    /// builds have no team identifier and would fail ``sameTeam(signingIdentifier:)``. The
+    /// builds have no team identifier and would fail ``sameTeam(signingIdentifiers:)``. The
     /// same-UID check still applies to every request.
     case insecureAnySigner
 
     public var description: String {
         switch self {
-        case let .sameTeam(id?): return "same-team(\(id))"
-        case .sameTeam(nil): return "same-team"
+        case let .sameTeam(ids): return "same-team(\(ids.joined(separator: ", ")))"
         case .insecureAnySigner: return "any-signer (development only)"
         }
     }
 
-    var requirement: XPCPeerRequirement? {
+    func requirement() throws(AgentXPCServerError) -> XPCPeerRequirement? {
         switch self {
-        case let .sameTeam(id): return .isFromSameTeam(andMatchesSigningIdentifier: id)
-        case .insecureAnySigner: return nil
+        case let .sameTeam(ids):
+            guard !ids.isEmpty else {
+                throw AgentXPCServerError(description: "the same-team peer policy needs at least one signing identifier")
+            }
+            do {
+                return .codeRequirement(try ProcessCodeRequirement.allOf {
+                    TeamIdentifierMatchesCurrentProcess()
+                    SigningIdentifier.in(ids)
+                })
+            } catch {
+                throw AgentXPCServerError(description: "cannot build the peer code requirement: \(error)")
+            }
+        case .insecureAnySigner:
+            return nil
         }
     }
 }
@@ -55,6 +71,7 @@ public final class AgentXPCServer: Sendable {
     public let service: AgentService
     /// The code-signing policy applied to every peer session.
     public let policy: PeerRequirementPolicy
+    private let requirement: XPCPeerRequirement?
     private let log: Logger
     private let workers = DispatchQueue(label: "dotfilesync.xpc.worker", attributes: .concurrent)
     /// The listener, set once during init and cleared by ``cancel()``.
@@ -75,10 +92,11 @@ public final class AgentXPCServer: Sendable {
         self.service = service
         self.policy = policy
         self.log = log
+        requirement = try policy.requirement()
         let handler = makeSessionHandler()
         do {
             let created: XPCListener
-            if let requirement = policy.requirement {
+            if let requirement {
                 created = try XPCListener(service: machService, requirement: requirement, incomingSessionHandler: handler)
             } else {
                 created = try XPCListener(service: machService, incomingSessionHandler: handler)
@@ -94,10 +112,11 @@ public final class AgentXPCServer: Sendable {
     ///
     /// For in-process tests and for handing an endpoint over an existing XPC channel. Tests may
     /// pass ``PeerRequirementPolicy/insecureAnySigner`` because the test runner is ad-hoc signed.
-    public init(anonymousFor service: AgentService, policy: PeerRequirementPolicy, log: Logger) {
+    public init(anonymousFor service: AgentService, policy: PeerRequirementPolicy, log: Logger) throws(AgentXPCServerError) {
         self.service = service
         self.policy = policy
         self.log = log
+        requirement = try policy.requirement()
         let created = XPCListener(targetQueue: nil, options: .none, incomingSessionHandler: makeSessionHandler())
         listener.withLock { $0 = created }
         log.info("xpc: listening on anonymous endpoint peer-requirement=\(policy)")
@@ -130,7 +149,7 @@ public final class AgentXPCServer: Sendable {
         { [weak self] request in
             guard let self else { return request.reject(reason: "agent is stopping") }
             return request.accept { (session: XPCSession) -> SessionHandler in
-                if let requirement = self.policy.requirement {
+                if let requirement = self.requirement {
                     session.setPeerRequirement(requirement)
                 }
                 self.activeSessions.add(1, ordering: .relaxed)

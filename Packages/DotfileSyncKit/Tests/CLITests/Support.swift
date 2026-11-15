@@ -259,12 +259,13 @@ final class TestAgent {
             layout: env.layout,
             brewBin: env.brew,
             shutdownGrace: .seconds(3),
-            heartbeatInterval: .milliseconds(200)
+            heartbeatInterval: .milliseconds(200),
+            presence: SkipUserPresence()
         )
         service = try AgentService(config: config)
         let log = try Logger(path: env.layout.logsDir.appending("xpc.log"), maxBytes: 64 * 1024, keep: 1)
         // TEST ONLY: the test runner is ad-hoc signed.
-        server = AgentXPCServer(anonymousFor: service, policy: .insecureAnySigner, log: log)
+        server = try AgentXPCServer(anonymousFor: service, policy: .insecureAnySigner, log: log)
     }
 
     var endpoint: XPCEndpointBox {

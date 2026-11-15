@@ -68,16 +68,19 @@ registration: the data directory, the user's dotfiles and any repositories are l
 
 Every message is authenticated twice:
 
-1. **Code signing.** The listener and every accepted session carry the peer requirement
-   `XPCPeerRequirement.isFromSameTeam(...)`: the peer must be signed by the same Developer ID team
-   as the agent. The app, the agent and the CLI are signed by one team. Rejected peers are logged
+1. **Code signing.** The listener and every accepted session carry a lightweight code
+   requirement: the peer must be signed by the same Developer ID team as the agent
+   (`TeamIdentifierMatchesCurrentProcess`) **and** carry one of the signing identifiers
+   `com.jamallyons.dotfilesync` (the app) or `com.jamallyons.dotfilesync.dotfilesync` (the
+   embedded CLI). Another program signed by the same team is refused. Rejected peers are logged
    to `xpc.log`. `dotfilesyncd --insecure-any-signer` turns this check off for ad-hoc-signed local
    builds only, and prints a warning when it does.
 2. **Effective UID.** For each message, the agent reads the sender's effective UID from the XPC
    peer connection (`xpc_connection_get_euid`, which comes from the kernel audit token). No UID
    field exists in any request. `AgentService` refuses requests whose UID differs from its own
    `ownerUid` (`geteuid()` at startup). The client checks the reverse: if the agent's reply comes
-   from a different UID, the client fails with `impostorAgent`.
+   from a different UID, the client fails with `impostorAgent`, and a reply whose sender UID
+   cannot be read is refused rather than trusted.
 
 Before connecting, the client also checks (without creating or repairing) that the data
 directories are private (§4). A missing data dir means the agent has never run.
@@ -124,7 +127,8 @@ Each XPC message is a dictionary that carries the IPC JSON as a UTF-8 string:
 | agent → client (during a watch) | `{ "watch_id": N, "notification": <Notification JSON> }`, answered by `{ "continue": <bool> }` |
 
 Each request is answered on a worker queue, so a long `watch_job` does not block other requests
-on the same session. Watch notifications are sent synchronously, one ack each. That keeps them in
+on the same session. A watch holds its worker for as long as it runs, so at most 16 watches
+(`JobLimits.maxWatches`) run at once; more are refused with `busy`. Watch notifications are sent synchronously, one ack each. That keeps them in
 order, applies back-pressure, and lets the agent notice a client that went away: the send fails,
 the watch stops, and the job keeps running.
 
@@ -186,15 +190,18 @@ The Homebrew binary comes from the agent's own configuration, never from a reque
 - **Storage:** tokens exist only in agent memory and in the caller's hands. They are never
   journaled or logged. An agent restart invalidates every approval.
 
-### Touch ID gate (app)
+### Touch ID gate (agent)
 
-The SwiftUI app asks for Touch ID (`LocalAuthentication`) before it requests an approval and
-applies a plan. The gate runs in the app process; the agent's token contract is the same for the
-app and the CLI. The CLI confirms with a `[y/N]` prompt on a TTY, or `--yes`.
+Before `plan.approve` issues a token, the agent itself asks for Touch ID, with the login password
+as fallback (`LAContext.evaluatePolicy(.deviceOwnerAuthentication)`). The system shows the prompt
+on the agent's behalf ("dotfilesyncd is trying to apply N dotfilesync changes to …"). Because the
+check runs in the agent, it applies to every client: the app, and the CLI even with `--yes`
+(the CLI's `[y/N]` prompt comes first). Resume needs a new approval, so it is gated too.
 
-The gate is a user-presence confirmation in the app UI, not an agent-enforced control: any
-same-team-signed peer running as the user (including the embedded CLI with `--yes`) can obtain
-an approval token without Touch ID. Enforcing presence in the agent is a follow-up.
+- A cancelled, failed or unavailable check refuses with `approval_rejected`,
+  `details.reason = "user_presence"`, and no token is issued.
+- The digest is checked first, so a stale or tampered plan never prompts.
+- One prompt at a time: a second `plan.approve` while a prompt is open gets `busy`.
 
 ## 8. Apply, journal and backups
 

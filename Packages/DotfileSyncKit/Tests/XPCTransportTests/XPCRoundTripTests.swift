@@ -30,7 +30,7 @@ private final class Harness {
         config.ownerUid = ownerUid
         service = try env.start(config)
         log = try Logger(path: env.layout.logsDir.appending("xpc.log"), maxBytes: 64 * 1024, keep: 1)
-        server = AgentXPCServer(anonymousFor: service, policy: policy, log: log)
+        server = try AgentXPCServer(anonymousFor: service, policy: policy, log: log)
     }
 
     func client() throws -> AgentXPCClient {

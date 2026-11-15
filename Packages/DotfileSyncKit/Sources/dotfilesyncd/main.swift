@@ -157,7 +157,12 @@ nonisolated func runAgent() -> Never {
 
     let server: AgentXPCServer
     if options.devStdio {
-        server = AgentXPCServer(anonymousFor: service, policy: policy, log: transportLog)
+        do {
+            server = try AgentXPCServer(anonymousFor: service, policy: policy, log: transportLog)
+        } catch {
+            _ = service.shutdown()
+            fail(error.description)
+        }
         serveStdio(service)
         note("\(AGENT_VERSION) serving --dev-stdio (pid \(getpid()), data dir \(layout.root.string))")
     } else {

@@ -21,11 +21,14 @@ public struct JobLimits: Sendable, Equatable {
     public var maxRetained: Int
     /// Per-subprocess deadline for the brew runner.
     public var commandTimeout: Duration
+    /// Concurrent `watch_job` streams. Each one holds a request thread for as long as it runs.
+    public var maxWatches: Int
 
-    public init(maxActive: Int = 16, maxRetained: Int = 64, commandTimeout: Duration = .seconds(120)) {
+    public init(maxActive: Int = 16, maxRetained: Int = 64, commandTimeout: Duration = .seconds(120), maxWatches: Int = 16) {
         self.maxActive = maxActive
         self.maxRetained = maxRetained
         self.commandTimeout = commandTimeout
+        self.maxWatches = maxWatches
     }
 }
 
@@ -192,6 +195,9 @@ public final class JobManager: Sendable {
     private let runs: RunIndex
     private let runsDir: FilePath
     private let backupsDir: FilePath
+    private let presence: any UserPresenceVerifier
+    /// True while a presence prompt is open.
+    private let presencePrompt = Atomic<Bool>(false)
 
     public init(
         journal: JobJournal,
@@ -200,7 +206,8 @@ public final class JobManager: Sendable {
         brewBin: FilePath?,
         limits: JobLimits,
         recovered: [RecoveredJob],
-        paths: JobPaths
+        paths: JobPaths,
+        presence: any UserPresenceVerifier
     ) {
         var reg = Registry()
         // Keep the newest recovered jobs visible so clients can see what was interrupted.
@@ -220,6 +227,7 @@ public final class JobManager: Sendable {
         runs = RunIndex.recover(runsDir: paths.runsDir, log: log, plans: plans, ownerUid: paths.ownerUid)
         runsDir = paths.runsDir
         backupsDir = paths.backupsDir
+        self.presence = presence
     }
 
     /// The job with `id`.
@@ -254,7 +262,8 @@ public final class JobManager: Sendable {
         return try spawn(.plan, .plan(input: input, ownerUid: ownerUid))
     }
 
-    /// Issues a single-use approval for `planId` if `digest` is its current digest.
+    /// Issues a single-use approval for `planId` if `digest` is its current digest and the
+    /// owner confirms their presence. At most one presence prompt is open at a time.
     public func approve(planId: String, digest: String, approverUid: UInt32) throws(ProtocolError) -> ApprovalGrant {
         try validateTokenId("plan_id", planId)
         guard let stored = plans.get(planId) else {
@@ -263,6 +272,7 @@ public final class JobManager: Sendable {
         if digest != stored.plan.digest {
             throw approvalRejected(.planMismatch)
         }
+        try confirmPresence(stored)
         let binding = approvalBinding(stored)
         let now = nowMs()
         let token: ApprovalToken
@@ -275,6 +285,22 @@ public final class JobManager: Sendable {
         let expiresAtMs = overflow ? UInt64.max : sum
         log.info("plan \(planId) approved uid=\(approverUid) expires_at_ms=\(expiresAtMs)")
         return ApprovalGrant(token: token.expose(), expiresAtMs: expiresAtMs)
+    }
+
+    private func confirmPresence(_ stored: StoredPlan) throws(ProtocolError) {
+        guard presencePrompt.compareExchange(expected: false, desired: true, ordering: .acquiring).exchanged else {
+            throw ProtocolError(.busy, "another approval is waiting for Touch ID or the password")
+        }
+        defer { presencePrompt.store(false, ordering: .releasing) }
+        let count = stored.plan.actions.count
+        let reason = "apply \(count) dotfilesync change\(count == 1 ? "" : "s") to \(stored.input.home.string)"
+        switch presence.confirmUserPresence(reason: reason) {
+        case .confirmed:
+            return
+        case let .denied(message), let .unavailable(message):
+            log.warn("plan \(stored.plan.digest.prefix(12)) approval refused: user presence not confirmed (\(message))")
+            throw approvalRejected(.userPresence(message))
+        }
     }
 
     /// Redeems `token` and starts applying `planId`.

@@ -1,5 +1,5 @@
-// SwiftUI shell: agent status and registration, scan/status/plan summaries, and a
-// Touch ID-gated apply.
+// SwiftUI shell: agent status and registration, scan/status/plan summaries, and apply
+// (the agent asks for Touch ID before it approves).
 
 import AgentRegistration
 import AppKit
@@ -7,15 +7,14 @@ import Core
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The app's window content, wired to the real agent, SMAppService and LocalAuthentication.
+/// The app's window content, wired to the real agent and SMAppService.
 struct DotfileSyncRootView: View {
     @State private var model: AppModel
 
     init() {
         _model = State(initialValue: AppModel(
             registration: AgentRegistration(),
-            agent: LiveAgentClient(),
-            gate: LocalAuthenticationGate()
+            agent: LiveAgentClient()
         ))
     }
 
@@ -232,8 +231,7 @@ private struct ApplyStateView: View {
     var body: some View {
         switch state {
         case .idle: EmptyView()
-        case .authenticating: Text("Waiting for Touch ID…")
-        case .approving: Text("Requesting approval from the agent…")
+        case .approving: Text("Confirm with Touch ID or your password to approve the plan…")
         case let .applying(jobId): HStack { ProgressView().controlSize(.small); Text("Applying (job \(jobId))…") }
         case let .completed(summary):
             Label("Run \(summary.runId): \(summary.done) done, \(summary.failed) failed, \(summary.skipped) skipped",

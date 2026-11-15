@@ -9,7 +9,7 @@ import Testing
 struct RegistrationTests {
     @Test func registerMovesToRequiresApprovalAndExplains() {
         let registration = FakeRegistration(status: .notRegistered)
-        let model = AppModel(registration: registration, agent: FakeAgent { _ throws(AgentCallError) in .pong }, gate: FakeGate(.confirmed))
+        let model = AppModel(registration: registration, agent: FakeAgent { _ throws(AgentCallError) in .pong })
         model.register()
         #expect(registration.calls == ["register"])
         #expect(model.registrationStatus == .requiresApproval)
@@ -18,7 +18,7 @@ struct RegistrationTests {
 
     @Test func registerFailureIsShown() {
         let registration = FakeRegistration(status: .notRegistered, failRegister: true)
-        let model = AppModel(registration: registration, agent: FakeAgent { _ throws(AgentCallError) in .pong }, gate: FakeGate(.confirmed))
+        let model = AppModel(registration: registration, agent: FakeAgent { _ throws(AgentCallError) in .pong })
         model.register()
         #expect(model.registrationMessage == "boom")
         #expect(model.registrationStatus == .notRegistered)
@@ -26,7 +26,7 @@ struct RegistrationTests {
 
     @Test func unregisterAndOpenLoginItems() {
         let registration = FakeRegistration(status: .enabled)
-        let model = AppModel(registration: registration, agent: FakeAgent { _ throws(AgentCallError) in .pong }, gate: FakeGate(.confirmed))
+        let model = AppModel(registration: registration, agent: FakeAgent { _ throws(AgentCallError) in .pong })
         model.unregister()
         model.openLoginItems()
         #expect(registration.calls == ["unregister", "openLoginItems"])
@@ -40,7 +40,7 @@ struct AgentStatusTests {
     @Test func reachableAgentReportsVersion() async {
         let info = DaemonInfo(daemonVersion: "0.1.0", protocolVersion: 1, pid: 42, uptimeMs: 5, dataDir: "/fixture/data", activeJobs: 2, retainedJobs: 0)
         let agent = FakeAgent { _ throws(AgentCallError) in .daemonInfo(info) }
-        let model = AppModel(registration: FakeRegistration(status: .enabled), agent: agent, gate: FakeGate(.confirmed))
+        let model = AppModel(registration: FakeRegistration(status: .enabled), agent: agent)
         await model.checkAgent()
         #expect(model.reachability == .reachable(version: "0.1.0", protocolVersion: 1, pid: 42, activeJobs: 2))
         #expect(agent.ops == ["daemon_info"])
@@ -48,7 +48,7 @@ struct AgentStatusTests {
 
     @Test func unreachableAgentIsReported() async {
         let agent = FakeAgent { _ throws(AgentCallError) in throw .notRunning("lookup failed") }
-        let model = AppModel(registration: FakeRegistration(status: .notRegistered), agent: agent, gate: FakeGate(.confirmed))
+        let model = AppModel(registration: FakeRegistration(status: .notRegistered), agent: agent)
         await model.checkAgent()
         guard case let .unreachable(reason) = model.reachability else {
             Issue.record("expected unreachable, got \(model.reachability)")
@@ -81,7 +81,7 @@ struct JobFlowTests {
             default: throw .unexpected(request.opName)
             }
         }
-        let model = AppModel(registration: FakeRegistration(status: .enabled), agent: agent, gate: FakeGate(.confirmed), homePath: "/fixture/home")
+        let model = AppModel(registration: FakeRegistration(status: .enabled), agent: agent, homePath: "/fixture/home")
         await model.runScan()
         #expect(model.phase == .idle)
         #expect(agent.ops == ["start_job", "watch_job", "job_result"])
@@ -94,7 +94,7 @@ struct JobFlowTests {
 
     @Test func statusRequiresAbsoluteManifest() async {
         let agent = FakeAgent { _ throws(AgentCallError) in .pong }
-        let model = AppModel(registration: FakeRegistration(status: .enabled), agent: agent, gate: FakeGate(.confirmed), manifestPath: "relative.toml", homePath: "/fixture/home")
+        let model = AppModel(registration: FakeRegistration(status: .enabled), agent: agent, manifestPath: "relative.toml", homePath: "/fixture/home")
         await model.runStatus()
         #expect(agent.requests.isEmpty)
         guard case .failed = model.phase else {
@@ -107,7 +107,7 @@ struct JobFlowTests {
         let agent = FakeAgent(terminal: snapshot("j1", .failed, error: JobError(code: .manifestLoad, message: "bad manifest"))) { request throws(AgentCallError) in
             .job(snapshot("j1", .running, kind: .status))
         }
-        let model = AppModel(registration: FakeRegistration(status: .enabled), agent: agent, gate: FakeGate(.confirmed), manifestPath: "/fixture/dotfilesync.toml", homePath: "/fixture/home")
+        let model = AppModel(registration: FakeRegistration(status: .enabled), agent: agent, manifestPath: "/fixture/dotfilesync.toml", homePath: "/fixture/home")
         await model.runStatus()
         #expect(model.phase == .failed("Job j1 failed: bad manifest"))
         #expect(model.status == nil)
@@ -115,7 +115,7 @@ struct JobFlowTests {
 }
 
 @MainActor
-struct ApplyGateTests {
+struct ApplyFlowTests {
     /// Agent that creates a plan, approves it and applies it.
     private func planningAgent(actions: Int = 2) -> FakeAgent {
         let plan = samplePlan(actions: actions)
@@ -137,13 +137,13 @@ struct ApplyGateTests {
         }
     }
 
-    private func model(_ agent: FakeAgent, _ gate: FakeGate) -> AppModel {
-        AppModel(registration: FakeRegistration(status: .enabled), agent: agent, gate: gate, manifestPath: "/fixture/dotfilesync.toml", homePath: "/fixture/home")
+    private func model(_ agent: FakeAgent) -> AppModel {
+        AppModel(registration: FakeRegistration(status: .enabled), agent: agent, manifestPath: "/fixture/dotfilesync.toml", homePath: "/fixture/home")
     }
 
     @Test func planIsSummarizedWithDigest() async {
         let agent = planningAgent()
-        let model = model(agent, FakeGate(.confirmed))
+        let model = model(agent)
         await model.runPlan()
         let plan = try! #require(model.plan)
         #expect(plan.planId == "p-1")
@@ -153,39 +153,32 @@ struct ApplyGateTests {
         #expect(model.canApply)
     }
 
-    @Test func deniedGateNeverRequestsApproval() async {
-        let agent = planningAgent()
-        let gate = FakeGate(.denied("user cancelled"))
-        let model = model(agent, gate)
+    @Test func presenceRefusedByTheAgentIsReportedAsCancelled() async {
+        let plan = samplePlan(actions: 1)
+        let refusal = ProtocolError(.approvalRejected, "user presence was not confirmed: user cancelled")
+            .withDetails(.object([("reason", .string("user_presence"))]))
+        let agent = FakeAgent { request throws(AgentCallError) in
+            switch request {
+            case .planCreate: return .job(snapshot("plan-job", .running, kind: .plan))
+            case .jobResult: return .jobResult(.plan(plan: plan, planId: "p-1"))
+            case .planApprove: throw .remote(refusal)
+            default: throw .unexpected(request.opName)
+            }
+        }
+        let model = model(agent)
         await model.runPlan()
         await model.applyPlan()
-        #expect(gate.prompts == [AppModel.applyReason])
-        #expect(!agent.ops.contains("plan.approve"))
         #expect(!agent.ops.contains("plan.apply"))
-        #expect(model.apply == .cancelled("Not applied: user cancelled."))
+        #expect(model.apply == .cancelled("Not applied: user presence was not confirmed: user cancelled."))
         #expect(model.plan != nil)
     }
 
-    @Test func unavailableGateNeverRequestsApproval() async {
+    @Test func approvesThenAppliesAndHidesToken() async {
         let agent = planningAgent()
-        let model = model(agent, FakeGate(.unavailable("no biometrics")))
-        await model.runPlan()
-        await model.applyPlan()
-        #expect(!agent.ops.contains("plan.approve"))
-        guard case .failed = model.apply else {
-            Issue.record("expected failure, got \(model.apply)")
-            return
-        }
-    }
-
-    @Test func confirmedGateApprovesThenAppliesAndHidesToken() async {
-        let agent = planningAgent()
-        let gate = FakeGate(.confirmed)
-        let model = model(agent, gate)
+        let model = model(agent)
         await model.runPlan()
         await model.applyPlan()
 
-        #expect(gate.prompts.count == 1)
         let ops = agent.ops
         let approve = try! #require(ops.firstIndex(of: "plan.approve"))
         let apply = try! #require(ops.firstIndex(of: "plan.apply"))
@@ -211,13 +204,11 @@ struct ApplyGateTests {
 
     @Test func emptyPlanCannotBeApplied() async {
         let agent = planningAgent(actions: 0)
-        let gate = FakeGate(.confirmed)
-        let model = model(agent, gate)
+        let model = model(agent)
         await model.runPlan()
         #expect(model.plan?.isEmpty == true)
         #expect(!model.canApply)
         await model.applyPlan()
-        #expect(gate.prompts.isEmpty)
         #expect(!agent.ops.contains("plan.approve"))
     }
 
@@ -231,7 +222,7 @@ struct ApplyGateTests {
             default: throw .unexpected(request.opName)
             }
         }
-        let model = model(agent, FakeGate(.confirmed))
+        let model = model(agent)
         await model.runPlan()
         await model.applyPlan()
         #expect(!agent.ops.contains("plan.apply"))

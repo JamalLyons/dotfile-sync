@@ -1,5 +1,5 @@
 // State and actions behind the SwiftUI shell. All side effects go through injected protocols
-// (`AgentRegistering`, `AgentClient`, `UserPresenceGate`) so tests drive it with fakes.
+// (`AgentRegistering`, `AgentClient`) so tests drive it with fakes.
 
 import AgentRegistration
 import Core
@@ -26,7 +26,7 @@ enum Phase: Equatable, Sendable {
 /// Where the apply flow stands. The approval token never appears here.
 enum ApplyState: Equatable, Sendable {
     case idle
-    case authenticating
+    /// Waiting for the agent, which asks for Touch ID or the password before it approves.
     case approving
     case applying(jobId: String)
     case completed(ApplySummary)
@@ -57,21 +57,15 @@ final class AppModel {
 
     @ObservationIgnored private let registration: any AgentRegistering
     @ObservationIgnored private let agent: any AgentClient
-    @ObservationIgnored private let gate: any UserPresenceGate
-
-    /// Shown in the Touch ID / password sheet.
-    static let applyReason = "apply the reviewed dotfilesync plan to your home directory"
 
     init(
         registration: any AgentRegistering,
         agent: any AgentClient,
-        gate: any UserPresenceGate,
         manifestPath: String = "",
         homePath: String = NSHomeDirectory()
     ) {
         self.registration = registration
         self.agent = agent
-        self.gate = gate
         self.manifestPath = manifestPath
         self.homePath = homePath
         registrationStatus = registration.status
@@ -80,7 +74,7 @@ final class AppModel {
     var isBusy: Bool {
         if case .running = phase { return true }
         switch apply {
-        case .authenticating, .approving, .applying: return true
+        case .approving, .applying: return true
         default: return false
         }
     }
@@ -170,22 +164,10 @@ final class AppModel {
         plan = PlanSummary(plan: created, planId: planId)
     }
 
-    /// Confirms user presence, then requests a one-time approval for the reviewed plan and
-    /// applies it. Nothing is sent to the agent unless the gate confirms.
+    /// Requests a one-time approval for the reviewed plan and applies it. The agent asks for
+    /// Touch ID or the password before it issues the approval, for this app and the CLI alike.
     func applyPlan() async {
         guard canApply, let plan else { return }
-        apply = .authenticating
-        switch await gate.confirmUserPresence(reason: Self.applyReason) {
-        case .confirmed:
-            break
-        case let .denied(reason):
-            apply = .cancelled("Not applied: \(reason).")
-            return
-        case let .unavailable(reason):
-            apply = .failed("Cannot confirm it is you: \(reason).")
-            return
-        }
-
         apply = .approving
         let job: JobSnapshot
         do {
@@ -202,7 +184,11 @@ final class AppModel {
             }
             job = snapshot
         } catch {
-            apply = .failed(error.description)
+            if case let .remote(remote) = error, remote.reason == "user_presence" {
+                apply = .cancelled("Not applied: \(remote.message).")
+            } else {
+                apply = .failed(error.description)
+            }
             return
         }
 

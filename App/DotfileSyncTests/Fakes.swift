@@ -48,22 +48,6 @@ final class FakeRegistration: AgentRegistering {
     }
 }
 
-final class FakeGate: UserPresenceGate {
-    let result: UserPresenceResult
-    private let reasons = Mutex<[String]>([])
-
-    init(_ result: UserPresenceResult) {
-        self.result = result
-    }
-
-    var prompts: [String] { reasons.withLock { $0 } }
-
-    func confirmUserPresence(reason: String) async -> UserPresenceResult {
-        reasons.withLock { $0.append(reason) }
-        return result
-    }
-}
-
 /// Scripted agent: answers by op name and records every request it receives.
 final class FakeAgent: AgentClient {
     typealias Handler = @Sendable (Request) throws(AgentCallError) -> Response

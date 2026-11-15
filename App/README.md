@@ -14,7 +14,7 @@ xcodebuild -project App/DotfileSync.xcodeproj -scheme DotfileSync -destination '
 | Path | Contents |
 | --- | --- |
 | `DotfileSync/` | `@main` entry point only (app target). |
-| `Shared/` | Views, `AppModel`, `LiveAgentClient` (XPC), `UserPresenceGate` (Touch ID). Compiled into both targets. |
+| `Shared/` | Views, `AppModel`, `LiveAgentClient` (XPC). Compiled into both targets. Touch ID is asked by the agent, not the app. |
 | `DotfileSyncTests/` | swift-testing tests with fake registration, agent and gate. |
 | `Scripts/embed-agent-binaries.sh` | Run Script phase that builds and embeds the agent and CLI. |
 | `LaunchAgents/` | The agent's launchd plist, copied to `Contents/Library/LaunchAgents/`. |
@@ -37,18 +37,18 @@ DotfileSync.app/Contents/
   environment, scratch dir under DerivedData, the target's `ARCHS`, debug/release matching the
   configuration) and copies the results with `ditto`.
 - With signing enabled, the script re-signs both binaries with the app's identity and the
-  hardened runtime: the agent's XPC listener only accepts peers signed by the same team.
+  hardened runtime: the agent's XPC listener only accepts the app and CLI signing identifiers
+  from the same team.
 
 ## Tests
 
 `DotfileSyncTests` is an unhosted unit-test bundle (no `TEST_HOST`): it compiles `Shared/` itself,
-so `xcodebuild test` never launches the app, never touches SMAppService/launchd and never shows a
-Touch ID prompt. Everything with side effects sits behind a protocol: `AgentRegistering`
-(package), `AgentClient`, `UserPresenceGate`.
+so `xcodebuild test` never launches the app and never touches SMAppService/launchd. Everything
+with side effects sits behind a protocol: `AgentRegistering` (package) and `AgentClient`.
 
 ## Needs a human
 
 - A signed build (set a team in Xcode; signing is `Automatic` with no team checked in).
 - Register from the app, approve the agent under System Settings → General → Login Items, then
   confirm the status view shows the agent version.
-- The Touch ID / password prompt before Apply, and an apply against a throwaway home.
+- The agent's Touch ID / password prompt on Apply, and an apply against a throwaway home.

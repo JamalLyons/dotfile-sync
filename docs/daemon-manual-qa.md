@@ -52,6 +52,7 @@ alias dotfilesync=/Applications/DotfileSync.app/Contents/MacOS/dotfilesync
 | 3.3 | `stat -f '%Sp %Su' ~/Library/Application\ Support/dotfilesync{,/state,/backups,/logs}` | `drwx------`, owned by you. |
 | 3.4 | `lsof -nP -a -p <pid> -i` | No output: no TCP or UDP sockets. |
 | 3.5 | Copy `Contents/MacOS/dotfilesync` elsewhere, `codesign --force -s - <copy>`, run `<copy> scan --mode agent` | Rejected (the peer is not from the same team). `logs/xpc.log` has a `rejected peer` warning. |
+| 3.5b | Re-sign the copy with your team but another identifier: `codesign --force -s "<your identity>" --identifier com.example.other <copy>`, then `<copy> scan --mode agent` | Rejected too: only the app and CLI identifiers are accepted. |
 | 3.6 | `dotfilesync status --manifest dotfilesync.toml --detach` | Prints a job ID. |
 | 3.7 | Close the terminal, open a new one, run `dotfilesync jobs watch <id>` | Shows the job's progress and ends with `succeeded`. |
 | 3.8 | `dotfilesync jobs result <id>` | The status report. |
@@ -63,11 +64,12 @@ up anything it replaces, but do not test on files you care about.
 
 | Step | Action | Expected |
 |---|---|---|
-| 4.1 | Open DotfileSync.app, review the plan, press Apply | Touch ID prompt. Cancel it: nothing is applied and no run appears in `dotfilesync runs list`. |
+| 4.1 | Open DotfileSync.app, review the plan, press Apply | Touch ID prompt, naming `dotfilesyncd` and the number of changes. Cancel it: the app says "Not applied", nothing is applied, and no run appears in `dotfilesync runs list`. |
 | 4.2 | Press Apply again and authenticate | The apply job runs. `dotfilesync runs list` shows the run `succeeded`. |
 | 4.3 | `ls ~/Library/Application\ Support/dotfilesync/backups/<run_id>` | Every replaced file is there as `<name>.backup.YYYYmmdd_HHMMSS`. |
 | 4.4 | `dotfilesync plan` | Empty plan (converged). |
-| 4.5 | From the CLI: `dotfilesync apply` on a TTY | Prints the plan and asks `Apply N actions? [y/N]`. `n` applies nothing. |
+| 4.5 | From the CLI: `dotfilesync apply` on a TTY | Prints the plan and asks `Apply N actions? [y/N]`. `n` applies nothing. `y` shows the Touch ID prompt; cancelling it fails with `user presence was not confirmed`. |
+| 4.6 | `dotfilesync apply --yes` | Still shows the Touch ID prompt: `--yes` skips only the `[y/N]` question. |
 
 ## 5. Stop, crash, relaunch
 

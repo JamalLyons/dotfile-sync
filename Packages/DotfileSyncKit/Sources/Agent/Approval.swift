@@ -68,6 +68,8 @@ public enum ApprovalError: Error, Sendable, Equatable, CustomStringConvertible {
     case stateChanged
     case wrongOwner
     case entropy
+    /// Touch ID / password was cancelled, failed or is unavailable.
+    case userPresence(String)
 
     public var description: String {
         switch self {
@@ -78,6 +80,7 @@ public enum ApprovalError: Error, Sendable, Equatable, CustomStringConvertible {
         case .stateChanged: return "observed state changed after the plan was approved; re-plan and approve again"
         case .wrongOwner: return "approval belongs to a different user"
         case .entropy: return "could not generate approval token"
+        case let .userPresence(message): return "user presence was not confirmed: \(message)"
         }
     }
 
@@ -91,6 +94,7 @@ public enum ApprovalError: Error, Sendable, Equatable, CustomStringConvertible {
         case .stateChanged: return "state_changed"
         case .wrongOwner: return "wrong_owner"
         case .entropy: return "entropy"
+        case .userPresence: return "user_presence"
         }
     }
 }

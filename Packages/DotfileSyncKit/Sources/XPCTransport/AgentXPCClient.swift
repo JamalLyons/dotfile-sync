@@ -189,8 +189,12 @@ public final class AgentXPCClient: Sendable {
             }
             throw .notRunning(reason: reason)
         }
-        // Same check the Rust client made with peer credentials on the socket.
-        if let agentUid = peerEuid(of: reply), agentUid != expectedUid {
+        // Same check the Rust client made with peer credentials on the socket. A reply whose
+        // sender cannot be identified is refused, not trusted.
+        guard let agentUid = peerEuid(of: reply) else {
+            throw .protocolViolation("cannot determine which user the agent runs as; refusing to talk to it")
+        }
+        if agentUid != expectedUid {
             throw .impostorAgent(agentUid: agentUid, expected: expectedUid)
         }
         connected.store(true, ordering: .relaxed)
