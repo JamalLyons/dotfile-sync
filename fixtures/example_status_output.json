@@ -58,8 +58,8 @@
       "source": "sample_local.conf",
       "target": "~/.config/sample/local.conf",
       "classification": "skipped",
-      "state": "machine_local",
-      "diagnostic": "Preserved as machine-local override (not modified)"
+      "state": "excluded",
+      "diagnostic": "Excluded by manifest rule"
     },
     {
       "source": "sample_config.fish",
