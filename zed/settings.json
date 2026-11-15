@@ -97,7 +97,9 @@
   "use_system_prompts": true,
   "use_system_path_prompts": true,
   "agent": {
-    "sidebar_side": "right",
+    "threads_sidebar": {
+      "position": "right"
+    },
     "favorite_models": [
       {
         "provider": "zed.dev",

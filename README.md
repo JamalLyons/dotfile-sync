@@ -165,11 +165,11 @@ from the documented empty template [`fish/conf.d/local.fish`](fish/conf.d/local.
 Included today (matched to `/Applications` where a cask exists):
 
 - Ghostty, Zed, Raycast, LLM-Studio, Rectangle, JetBrains Toolbox
-- Discord, Lark, Docker Desktop, Brave, Chrome, Spotify, OBS
-- GitHub Desktop, Cursor, Claude, DBeaver, Inkscape, MEGAsync
+- Discord, Lark, Docker Desktop, Brave, Spotify, OBS
+- GitHub Desktop, Cursor, Claude, Inkscape
 - Steam, Audacity, Cloudflare WARP, eqMac, pgAdmin 4
 - Antigravity, Google Gemini, Juicy, Epic Games, Minecraft, Roblox
-- Windows App, melonDS
+- Windows App
 
 **No Homebrew cask** (install/update manually or via Mac App Store):
 
@@ -233,7 +233,7 @@ In Fish, run `helpme` for the full list. Highlights:
 | `ql <file>` | Quick Look |
 | `cdf` | cd to frontmost Finder window |
 | `flushdns` | Flush macOS DNS cache |
-| `path` | Print `$PATH` one entry per line |
+| `showpath` | Print `$PATH` one entry per line |
 | `serve [port]` | Python HTTP server |
 | `note [text]` | Quick notes |
 

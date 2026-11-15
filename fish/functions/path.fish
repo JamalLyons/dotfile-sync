@@ -1,4 +1,4 @@
 # Print PATH entries one per line
-function path
+function showpath
     printf '%s\n' $PATH
 end

@@ -126,6 +126,12 @@ main() {
 
   install_homebrew
   ensure_brew_on_path || die "Homebrew is required"
+  ensure_fish_installed
+
+  # Apply shell config and select Fish before the long package bundle. This
+  # leaves the shell usable even if a later formula or cask install fails.
+  sync_fish_templates
+  set_fish_as_default_shell
 
   run_brew_bundle "${REPO_ROOT}/Brewfile"
   ensure_rustup
@@ -133,7 +139,6 @@ main() {
   # Fonts after brew so --skip-casks still gets 0xProto; failures warn only.
   install_fonts
 
-  sync_fish_templates
   install_fisher
   install_fisher_plugins
 
@@ -143,8 +148,6 @@ main() {
   setup_pnpm
 
   setup_xcode
-
-  set_fish_as_default_shell
 
   install_models
 
