@@ -18,12 +18,10 @@ Thumbs.db
 *.tmp
 *.log
 
-# Rust build artifacts
-target/
-
 
 # Swift build artifacts
 .build/
 .swiftpm/
 DerivedData/
 xcuserdata/
+*.xcuserstate
