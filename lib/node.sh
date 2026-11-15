@@ -14,11 +14,10 @@ setup_fnm_node() {
   fi
 
   info "Installing Node.js LTS via fnm..."
+  eval "$(fnm env --shell bash)"
   fnm install --lts --use
   # Alias LTS as the default for new shells
   fnm default lts-latest 2>/dev/null || fnm default "$(fnm current)"
-
-  eval "$(fnm env --shell bash)"
 
   local version
   version="$(node --version 2>/dev/null || true)"
@@ -40,8 +39,15 @@ setup_pnpm() {
   fi
 
   if ! ensure_cmd corepack; then
-    warning "corepack not found; skipping pnpm setup"
-    return 0
+    if ! ensure_cmd npm; then
+      warning "npm not found; cannot install Corepack, skipping pnpm setup"
+      return 0
+    fi
+    info "Corepack is not bundled with this Node.js version; installing it via npm..."
+    if ! npm install --global corepack; then
+      warning "Failed to install Corepack; skipping pnpm setup"
+      return 0
+    fi
   fi
 
   info "Enabling pnpm via Corepack..."

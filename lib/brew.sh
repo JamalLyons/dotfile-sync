@@ -34,6 +34,26 @@ install_homebrew() {
   success "Homebrew installed"
 }
 
+ensure_fish_installed() {
+  if ensure_cmd fish; then
+    success "Fish already installed: $(fish --version)"
+    return 0
+  fi
+
+  if [[ "${DRY_RUN:-0}" == "1" ]]; then
+    info "[dry-run] Would run: brew install fish"
+    return 0
+  fi
+
+  info "Fish is missing; installing it with Homebrew..."
+  if ! brew install fish; then
+    die "Could not install Fish with Homebrew. Check that your Homebrew directories are writable, then rerun setup."
+  fi
+
+  ensure_cmd fish || die "Homebrew reported success, but Fish is still not available on PATH. Restart the terminal or add Homebrew's bin directory to PATH."
+  success "Fish installed: $(fish --version)"
+}
+
 ensure_brew_pkg() {
   local pkg="$1"
   if brew list --formula "$pkg" &>/dev/null || brew list --cask "$pkg" &>/dev/null; then
@@ -61,7 +81,7 @@ run_brew_bundle() {
   local brewfile="$1"
   local effective
   effective="$(_brewfile_for_bundle "$brewfile")"
-  local -a args=(bundle --file="$effective" --no-lock)
+  local -a args=(bundle install --file="$effective" --verbose)
 
   if [[ "${SKIP_CASKS:-0}" == "1" ]]; then
     args+=(--brews --taps)

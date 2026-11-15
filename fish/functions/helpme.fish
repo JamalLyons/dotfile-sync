@@ -32,7 +32,7 @@ function helpme
     echo "    showfiles       - Show hidden files in Finder"
     echo "    hidefiles       - Hide hidden files in Finder"
     echo "    flushdns        - Flush DNS cache"
-    echo "    path            - Print PATH one entry per line"
+    echo "    showpath        - Print PATH one entry per line"
     echo ""
     echo "  Development:"
     echo "    serve [port]    - HTTP server (default 8000)"

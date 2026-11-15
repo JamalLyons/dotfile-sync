@@ -10,7 +10,6 @@ description = "macOS developer environment configuration for Jamal Lyons"
 formulae = [
     "aria2",
     "bat",
-    "biome",
     "btop",
     "cargo-binstall",
     "cloc",
@@ -23,7 +22,6 @@ formulae = [
     "fzf",
     "gh",
     "git",
-    "go",
     "imagemagick",
     "just",
     "openjdk",
@@ -41,19 +39,15 @@ casks = [
     "brave-browser",
     "claude",
     "cursor",
-    "dbeaver-community",
     "discord",
     "eqmac",
     "font-0xproto",
     "ghostty",
     "github",
-    "google-chrome",
     "jetbrains-toolbox",
     "juicy",
     "lark",
     "lm-studio",
-    "megasync",
-    "melonds",
     "minecraft",
     "obs",
     "raycast",
@@ -200,7 +194,7 @@ default = "personal"
 [profiles.work.package_managers.homebrew]
 formulae = ["awscli"]
 casks = ["slack"]
-exclude_casks = ["melonds", "minecraft", "roblox", "steam"]
+exclude_casks = ["minecraft", "roblox", "steam"]
 
 # ---------------------------------------------------------------------------
 # Exclusions
