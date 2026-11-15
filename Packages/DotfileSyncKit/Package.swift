@@ -6,6 +6,8 @@ let package = Package(
     platforms: [.macOS(.v26)],
     products: [
         .library(name: "Core", targets: ["Core"]),
+        .library(name: "IPC", targets: ["IPC"]),
+        .library(name: "Agent", targets: ["Agent"]),
     ],
     dependencies: [
         .package(url: "https://github.com/LebJe/TOMLKit.git", from: "0.6.0"),
@@ -18,6 +20,22 @@ let package = Package(
         .testTarget(
             name: "CoreTests",
             dependencies: ["Core"]
+        ),
+        .target(
+            name: "IPC",
+            dependencies: ["Core"]
+        ),
+        .target(
+            name: "Agent",
+            dependencies: ["Core", "IPC"]
+        ),
+        .testTarget(
+            name: "IPCTests",
+            dependencies: ["Core", "IPC"]
+        ),
+        .testTarget(
+            name: "AgentTests",
+            dependencies: ["Core", "IPC", "Agent"]
         ),
     ],
     swiftLanguageModes: [.v6]
