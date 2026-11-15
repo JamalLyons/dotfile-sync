@@ -1,10 +1,21 @@
-# my-shell
+# dotfile-sync
+
+**Repo:** [https://github.com/JamalLyons/dotfile-sync](https://github.com/JamalLyons/dotfile-sync)
+
+This repository holds two things:
+
+1. **dotfilesync**: a macOS app, background agent and CLI written in Swift. It compares
+   [`dotfilesync.toml`](dotfilesync.toml) with the machine and applies a reviewed plan, with
+   Touch ID approval and backups. **To try it, follow [docs/testing.md](docs/testing.md).**
+   Details are in [dotfilesync](#dotfilesync-macos-environment-manager) below.
+2. **`setup.sh`**: the original shell bootstrap (Homebrew, Fish, Tide, fnm, Xcode, Zed settings).
+   It still works and stays until dotfilesync covers the same ground.
+
+## Shell bootstrap (`setup.sh`)
 
 Brewfile-driven macOS coding environment bootstrap: Fish shell, Tide prompt, fnm (Node), and the CLI/GUI tools you declare in a Brewfile.
 
-**Repo:** [https://github.com/JamalLyons/my-shell](https://github.com/JamalLyons/my-shell)
-
-## Quick start
+### Quick start
 
 ```bash
 bash ./setup.sh
@@ -22,7 +33,7 @@ bash ./setup.sh --skip-zed      # skip Zed settings sync
 bash ./setup.sh --skip-models   # skip LM Studio model downloads
 ```
 
-## What it does
+### What it does
 
 1. Installs Homebrew if missing
 2. Applies [`Brewfile`](Brewfile) (CLI formulas + casks)
@@ -35,10 +46,10 @@ bash ./setup.sh --skip-models   # skip LM Studio model downloads
 9. Downloads preferred local models via **LM Studio CLI** (`lms get`)
 10. Optionally sets Fish as your login shell
 
-## Layout
+### Layout
 
 ```
-my-shell/
+dotfile-sync/
 ├── setup.sh              # Thin orchestrator
 ├── Brewfile              # Declarative packages + casks
 ├── lib/
@@ -65,14 +76,14 @@ my-shell/
 └── README.md
 ```
 
-## Adding software
+### Adding software
 
 - **CLI / Homebrew apps:** edit `Brewfile`, then re-run `bash ./setup.sh` (or `brew bundle --file=Brewfile`).
 - **Fish plugins:** edit `fish/fish_plugins`, then re-run setup (or `fisher update` in Fish).
 - **Fish config / functions:** edit files under `fish/`, then re-run setup to sync.
 - **Zed settings:** edit [`zed/settings.json`](zed/settings.json), then re-run setup to sync to `~/.config/zed/settings.json`.
 
-### Local environment variables
+#### Local environment variables
 
 Shared config must not contain secrets. Setup creates (once):
 
@@ -82,7 +93,7 @@ Shared config must not contain secrets. Setup creates (once):
 
 from the documented empty template [`fish/conf.d/local.fish`](fish/conf.d/local.fish). Later `setup.sh` runs **never overwrite** that file. Put project IDs, tokens, and machine-only paths there (`editenv`), then `reload`.
 
-### GUI apps (casks)
+#### GUI apps (casks)
 
 Included today (matched to `/Applications` where a cask exists):
 
@@ -102,11 +113,11 @@ Included today (matched to `/Applications` where a cask exists):
 
 Full **Xcode** is installed by `setup.sh` via `xcodes` (not a Homebrew cask). Use `--skip-xcode` to skip.
 
-### Fonts
+#### Fonts
 
 **0xProto** is installed with Homebrew cask `font-0xproto` (user fonts under `~/Library/Fonts`). Preferred release: **2.502** (see `OXPROTO_PREFERRED_VERSION` in [`lib/fonts.sh`](lib/fonts.sh)). Setup still installs it when you pass `--skip-casks`; use `--skip-fonts` to skip. Ghostty, Zed, and other apps need the font selected in their settings after install.
 
-### Zed settings
+#### Zed settings
 
 Global Zed config lives in [`zed/settings.json`](zed/settings.json) and installs to `~/.config/zed/settings.json`.
 
@@ -115,11 +126,11 @@ Global Zed config lives in [`zed/settings.json`](zed/settings.json) and installs
 - Different existing file → warns and asks `Overwrite? [y/N]` (default **N**); only overwrites on `y`/`Y`
 - Use `--skip-zed` to skip; `DRY_RUN=1` / `--dry-run` prints intent without writing or prompting to overwrite
 
-### Updating packages
+#### Updating packages
 
 Homebrew formulae and casks are updated through [Vorssaint](https://github.com/vorssaint/vorssaint-utils) (App updates / Homebrew manager). In Fish, run `fisherup` to update Fisher plugins.
 
-## Node via fnm
+### Node via fnm
 
 This setup uses **fnm**, not nvm / nvm.fish.
 
@@ -134,11 +145,11 @@ fnm use 22
 
 If you previously used nvm, `~/.nvm` is left alone. After confirming fnm works you can remove it and `brew uninstall nvm` if present.
 
-## Prompt
+### Prompt
 
 Uses [Tide](https://github.com/IlanCosman/tide) (`ilancosman/tide@v6`). Configure with `tide configure`.
 
-## Custom Fish commands
+### Custom Fish commands
 
 In Fish, run `helpme` for the full list. Highlights:
 
@@ -161,17 +172,12 @@ In Fish, run `helpme` for the full list. Highlights:
 
 Git abbreviations: `gst`, `gco`, `gaa`, `gcm`, `gps`, `gpl`, …
 
-## Requirements
+### Requirements
 
 - macOS
 - Network access (Homebrew, Fisher, fnm)
 - Git (usually via Xcode CLT / Homebrew)
 
-## License
-
-Apache-2.0
-
----
 
 ## dotfilesync (macOS environment manager)
 
@@ -214,12 +220,8 @@ xcodebuild -project App/DotfileSync.xcodeproj -scheme DotfileSync \
   -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build test
 ```
 
-The agent's peer check needs a signed app with a team ID; see [docs/daemon-manual-qa.md](docs/daemon-manual-qa.md) for building and testing a signed app. For a quick local try of the read-only commands, the package build is enough:
-
-```bash
-cd Packages/DotfileSyncKit
-swift run dotfilesync status --manifest ../../dotfilesync.toml --mode standalone
-```
+The agent's peer check needs a signed app with a team ID; see [docs/daemon-manual-qa.md](docs/daemon-manual-qa.md) for building and testing a signed app. Step-by-step instructions for trying the CLI, the app, the agent and apply are in
+[docs/testing.md](docs/testing.md).
 
 ### CLI commands
 
@@ -299,3 +301,7 @@ The repository includes a versioned `dotfilesync.toml` (schema version 1) modeli
 - **Still on `setup.sh`**: installing Homebrew itself, Node via fnm and pnpm, the latest Xcode and LM Studio models are not plan actions yet (issue #5).
 - **Out of scope for now**: toolchains beyond Homebrew, config editing, state sync, the FSEvents watcher, a privileged helper for `sudo` steps, and crash auto-restart (no `KeepAlive`).
 - **macOS only**: XPC and SMAppService exist only on macOS; there is no Linux build.
+
+## License
+
+Apache-2.0
