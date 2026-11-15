@@ -4,7 +4,7 @@ import Testing
 
 /// Ports of crates/dotfilesync-core/tests/repo_manifest_tests.rs (reads repo-root dotfilesync.toml).
 struct RepoManifestTests {
-    private static let games = ["melonds", "minecraft", "roblox", "steam"]
+    private static let games = ["minecraft", "roblox", "steam"]
 
     private func manifestText() throws -> String {
         try String(contentsOf: TestPaths.repoRoot.appendingPathComponent("dotfilesync.toml"), encoding: .utf8)

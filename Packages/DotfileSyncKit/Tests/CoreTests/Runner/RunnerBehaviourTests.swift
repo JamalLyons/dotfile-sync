@@ -40,7 +40,12 @@ struct RunnerBehaviourTests {
     @Test func cancelDuringRunKillsChild() {
         let flag = CancellationFlag()
         let runner = RealCommandRunner(timeout: .seconds(5)).withCancellation(flag)
-        DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(200)) { flag.cancel() }
+        // A dedicated thread, not the global queue: parallel tests that block can starve the
+        // global queue on small CI runners, so the cancel would never fire.
+        Thread.detachNewThread {
+            Thread.sleep(forTimeInterval: 0.2)
+            flag.cancel()
+        }
         let clock = ContinuousClock()
         let start = clock.now
         #expect(throws: RunnerError.cancelled(program: "/bin/sh")) {
