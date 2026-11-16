@@ -1,0 +1,465 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		653C714AAA097B91751BD2C5 /* Core in Frameworks */ = {isa = PBXBuildFile; productRef = 4BB02C473884CB8296686B31 /* Core */; };
+		CAD782A4BA2FF39CB203796C /* IPC in Frameworks */ = {isa = PBXBuildFile; productRef = 0408490A5CE498A8FC200B29 /* IPC */; };
+		C6A8DE9AC5B3CE11CF5D4CD5 /* XPCTransport in Frameworks */ = {isa = PBXBuildFile; productRef = 6EE7815489C64AFDCD6DED17 /* XPCTransport */; };
+		9E45727AD98D5CEAA04656F8 /* AgentRegistration in Frameworks */ = {isa = PBXBuildFile; productRef = 4E5625C293901587CD2A7BDB /* AgentRegistration */; };
+		658229FBAC47932785D853AB /* Core in Frameworks */ = {isa = PBXBuildFile; productRef = FF72F887D4FEB8CC77A0A015 /* Core */; };
+		94E426C13FA34A4F1F8D390A /* IPC in Frameworks */ = {isa = PBXBuildFile; productRef = 8861BA1C6CE4C7524CF77BEF /* IPC */; };
+		74804D857AE8F9D7739FD4F6 /* XPCTransport in Frameworks */ = {isa = PBXBuildFile; productRef = CA5643BBCC209856A53BDC1C /* XPCTransport */; };
+		42DCAA6A65C59BD02E256787 /* AgentRegistration in Frameworks */ = {isa = PBXBuildFile; productRef = 9A7DCBDD6347590081F06B6B /* AgentRegistration */; };
+		7DA2D1E2E41ED3F611F34291 /* com.jamallyons.dotfilesync.agent.plist in Copy LaunchAgents */ = {isa = PBXBuildFile; fileRef = 45C58484A5564663B7C93640 /* com.jamallyons.dotfilesync.agent.plist */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		D2693250373C6968FD387930 /* Copy LaunchAgents */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
+			files = (
+				7DA2D1E2E41ED3F611F34291 /* com.jamallyons.dotfilesync.agent.plist in Copy LaunchAgents */,
+			);
+			name = "Copy LaunchAgents";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		C6A4383EBBB444B0A74BF508 /* DotfileSync.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DotfileSync.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4302BBA6306CE92C97DBA77B /* DotfileSyncTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DotfileSyncTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		45C58484A5564663B7C93640 /* com.jamallyons.dotfilesync.agent.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = com.jamallyons.dotfilesync.agent.plist; sourceTree = "<group>"; };
+		9F09E6318861B1A86BB39B51 /* embed-agent-binaries.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; name = "embed-agent-binaries.sh"; path = "Scripts/embed-agent-binaries.sh"; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		ABB8653E1EEFFC1527FCD537 /* DotfileSync */ = {isa = PBXFileSystemSynchronizedRootGroup; path = DotfileSync; sourceTree = "<group>"; };
+		6FD3704F6C7BB763E21BCD9E /* Shared */ = {isa = PBXFileSystemSynchronizedRootGroup; path = Shared; sourceTree = "<group>"; };
+		21D667710AD13E5594FCE27B /* DotfileSyncTests */ = {isa = PBXFileSystemSynchronizedRootGroup; path = DotfileSyncTests; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		0622C9826A94C02081D0DBF1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				653C714AAA097B91751BD2C5 /* Core in Frameworks */,
+				CAD782A4BA2FF39CB203796C /* IPC in Frameworks */,
+				C6A8DE9AC5B3CE11CF5D4CD5 /* XPCTransport in Frameworks */,
+				9E45727AD98D5CEAA04656F8 /* AgentRegistration in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E7747B6D5E318B8114657CE3 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				658229FBAC47932785D853AB /* Core in Frameworks */,
+				94E426C13FA34A4F1F8D390A /* IPC in Frameworks */,
+				74804D857AE8F9D7739FD4F6 /* XPCTransport in Frameworks */,
+				42DCAA6A65C59BD02E256787 /* AgentRegistration in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		EDA6D6223944636B9C5B54AA = {
+			isa = PBXGroup;
+			children = (
+				ABB8653E1EEFFC1527FCD537 /* DotfileSync */,
+				6FD3704F6C7BB763E21BCD9E /* Shared */,
+				21D667710AD13E5594FCE27B /* DotfileSyncTests */,
+				7E09A8CEEA574A2ECC29A438 /* LaunchAgents */,
+				9F09E6318861B1A86BB39B51 /* embed-agent-binaries.sh */,
+				BFE00B156DCFC34C4751A6E5 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		7E09A8CEEA574A2ECC29A438 /* LaunchAgents */ = {
+			isa = PBXGroup;
+			children = (
+				45C58484A5564663B7C93640 /* com.jamallyons.dotfilesync.agent.plist */,
+			);
+			path = LaunchAgents;
+			sourceTree = "<group>";
+		};
+		BFE00B156DCFC34C4751A6E5 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C6A4383EBBB444B0A74BF508 /* DotfileSync.app */,
+				4302BBA6306CE92C97DBA77B /* DotfileSyncTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		173FEB50ADBA89A6C8F193E1 /* DotfileSync */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FC5D7F5E8ED99501BF438497 /* Build configuration list for PBXNativeTarget "DotfileSync" */;
+			buildPhases = (
+				FADDE049E14230D76C857C93 /* Sources */,
+				0622C9826A94C02081D0DBF1 /* Frameworks */,
+				DBFDD9F3454D267306FEB0BB /* Resources */,
+				D2693250373C6968FD387930 /* Copy LaunchAgents */,
+				618794EE4D31CF217E884B9F /* Embed dotfilesyncd and dotfilesync */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				ABB8653E1EEFFC1527FCD537 /* DotfileSync */,
+				6FD3704F6C7BB763E21BCD9E /* Shared */,
+			);
+			name = DotfileSync;
+			packageProductDependencies = (
+				4BB02C473884CB8296686B31 /* Core */,
+				0408490A5CE498A8FC200B29 /* IPC */,
+				6EE7815489C64AFDCD6DED17 /* XPCTransport */,
+				4E5625C293901587CD2A7BDB /* AgentRegistration */,
+			);
+			productName = DotfileSync;
+			productReference = C6A4383EBBB444B0A74BF508;
+			productType = "com.apple.product-type.application";
+		};
+		BF7CCAB90F7B05C2595D3444 /* DotfileSyncTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C41EDC42B9D3D2958682F9CC /* Build configuration list for PBXNativeTarget "DotfileSyncTests" */;
+			buildPhases = (
+				636720734B51C28493C5DC16 /* Sources */,
+				E7747B6D5E318B8114657CE3 /* Frameworks */,
+				BE86D9AAD7E2ACC8891E7BBF /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				6FD3704F6C7BB763E21BCD9E /* Shared */,
+				21D667710AD13E5594FCE27B /* DotfileSyncTests */,
+			);
+			name = DotfileSyncTests;
+			packageProductDependencies = (
+				FF72F887D4FEB8CC77A0A015 /* Core */,
+				8861BA1C6CE4C7524CF77BEF /* IPC */,
+				CA5643BBCC209856A53BDC1C /* XPCTransport */,
+				9A7DCBDD6347590081F06B6B /* AgentRegistration */,
+			);
+			productName = DotfileSyncTests;
+			productReference = 4302BBA6306CE92C97DBA77B;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		98F54143AB4E86B28C3AFEE0 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					173FEB50ADBA89A6C8F193E1 = {
+						CreatedOnToolsVersion = 27.2;
+					};
+					BF7CCAB90F7B05C2595D3444 = {
+						CreatedOnToolsVersion = 27.2;
+					};
+				};
+			};
+			buildConfigurationList = 5636BA33F8A7B513012B9728 /* Build configuration list for PBXProject "DotfileSync" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = EDA6D6223944636B9C5B54AA;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				4FF15B936B8851E2CAA578B9 /* XCLocalSwiftPackageReference "../Packages/DotfileSyncKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = BFE00B156DCFC34C4751A6E5 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				173FEB50ADBA89A6C8F193E1 /* DotfileSync */,
+				BF7CCAB90F7B05C2595D3444 /* DotfileSyncTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		DBFDD9F3454D267306FEB0BB /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BE86D9AAD7E2ACC8891E7BBF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		618794EE4D31CF217E884B9F /* Embed dotfilesyncd and dotfilesync */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed dotfilesyncd and dotfilesync";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "exec \"${SRCROOT}/Scripts/embed-agent-binaries.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		FADDE049E14230D76C857C93 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		636720734B51C28493C5DC16 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		D02171F9A7234B2D50FB310A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		D7FB04220037AA459D359996 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		57E05A512D9DB97A8D200805 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				EXECUTABLE_NAME = DotfileSyncApp;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = DotfileSync;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jamallyons.dotfilesync;
+				PRODUCT_NAME = DotfileSync;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Debug;
+		};
+		DED2BE3ECA47B229D07386F3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
+				EXECUTABLE_NAME = DotfileSyncApp;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = DotfileSync;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jamallyons.dotfilesync;
+				PRODUCT_NAME = DotfileSync;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+			};
+			name = Release;
+		};
+		A0349C468CB5364D39433D42 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jamallyons.dotfilesync.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+			};
+			name = Debug;
+		};
+		52838A549D5AC6C8CB63D2B4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jamallyons.dotfilesync.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		5636BA33F8A7B513012B9728 /* Build configuration list for PBXProject "DotfileSync" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D02171F9A7234B2D50FB310A /* Debug */,
+				D7FB04220037AA459D359996 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FC5D7F5E8ED99501BF438497 /* Build configuration list for PBXNativeTarget "DotfileSync" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				57E05A512D9DB97A8D200805 /* Debug */,
+				DED2BE3ECA47B229D07386F3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C41EDC42B9D3D2958682F9CC /* Build configuration list for PBXNativeTarget "DotfileSyncTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A0349C468CB5364D39433D42 /* Debug */,
+				52838A549D5AC6C8CB63D2B4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		4FF15B936B8851E2CAA578B9 /* XCLocalSwiftPackageReference "../Packages/DotfileSyncKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../Packages/DotfileSyncKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		4BB02C473884CB8296686B31 /* Core */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4FF15B936B8851E2CAA578B9 /* XCLocalSwiftPackageReference "../Packages/DotfileSyncKit" */;
+			productName = Core;
+		};
+		0408490A5CE498A8FC200B29 /* IPC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4FF15B936B8851E2CAA578B9 /* XCLocalSwiftPackageReference "../Packages/DotfileSyncKit" */;
+			productName = IPC;
+		};
+		6EE7815489C64AFDCD6DED17 /* XPCTransport */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4FF15B936B8851E2CAA578B9 /* XCLocalSwiftPackageReference "../Packages/DotfileSyncKit" */;
+			productName = XPCTransport;
+		};
+		4E5625C293901587CD2A7BDB /* AgentRegistration */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4FF15B936B8851E2CAA578B9 /* XCLocalSwiftPackageReference "../Packages/DotfileSyncKit" */;
+			productName = AgentRegistration;
+		};
+		FF72F887D4FEB8CC77A0A015 /* Core */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4FF15B936B8851E2CAA578B9 /* XCLocalSwiftPackageReference "../Packages/DotfileSyncKit" */;
+			productName = Core;
+		};
+		8861BA1C6CE4C7524CF77BEF /* IPC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4FF15B936B8851E2CAA578B9 /* XCLocalSwiftPackageReference "../Packages/DotfileSyncKit" */;
+			productName = IPC;
+		};
+		CA5643BBCC209856A53BDC1C /* XPCTransport */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4FF15B936B8851E2CAA578B9 /* XCLocalSwiftPackageReference "../Packages/DotfileSyncKit" */;
+			productName = XPCTransport;
+		};
+		9A7DCBDD6347590081F06B6B /* AgentRegistration */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4FF15B936B8851E2CAA578B9 /* XCLocalSwiftPackageReference "../Packages/DotfileSyncKit" */;
+			productName = AgentRegistration;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 98F54143AB4E86B28C3AFEE0 /* Project object */;
+}

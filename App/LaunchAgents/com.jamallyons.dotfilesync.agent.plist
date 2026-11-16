@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd definition for the per-user dotfilesync agent (dotfilesyncd).
+
+  Ships inside the signed app bundle at
+    DotfileSync.app/Contents/Library/LaunchAgents/com.jamallyons.dotfilesync.agent.plist
+  and is registered with SMAppService.agent(plistName:) (see Sources/AgentRegistration).
+  Nothing is written to ~/Library/LaunchAgents.
+
+  - Label and the Mach service name equal AGENT_MACH_SERVICE (Sources/XPCTransport/Wire.swift).
+  - BundleProgram is relative to the app bundle root.
+  - No RunAtLoad and no KeepAlive: launchd starts the agent on demand when a client looks up
+    the Mach service, matching the Rust default of not starting at login unless asked.
+  - AssociatedBundleIdentifiers makes System Settings > Login Items show the app's name.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jamallyons.dotfilesync.agent</string>
+    <key>BundleProgram</key>
+    <string>Contents/MacOS/dotfilesyncd</string>
+    <key>MachServices</key>
+    <dict>
+        <key>com.jamallyons.dotfilesync.agent</key>
+        <true/>
+    </dict>
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>com.jamallyons.dotfilesync</string>
+    </array>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

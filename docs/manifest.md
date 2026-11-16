@@ -2,7 +2,7 @@
 
 `dotfilesync.toml` is the desired state for a machine. Schema version **1** includes profiles, hostname selection, and setup keys. Profiles are optional: a manifest with only the base layer is valid. Any other `schema_version` is rejected.
 
-The repository manifest is schema 1. `personal` keeps that base layer (including game casks). `work` adds `awscli` and `slack` and removes `melonds`, `minecraft`, `roblox`, and `steam`. `[select] default = "personal"`.
+The repository manifest is schema 1. `personal` keeps that base layer (including game casks). `work` adds `awscli` and `slack` and removes `minecraft`, `roblox`, and `steam`. `[select] default = "personal"`.
 
 ## Top-level fields
 
