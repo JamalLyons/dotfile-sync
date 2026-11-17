@@ -584,7 +584,7 @@ public struct RunView: Codable, Sendable, Equatable {
 
 /// Why a run cannot be resumed (`RunView.notResumable`).
 public struct NotResumable: Codable, Sendable, Equatable {
-    /// Stable code: `missing_plan_digest`, `plan_digest_mismatch` or `plan_unreadable`.
+    /// Stable code: `missing_plan_digest` or `plan_digest_mismatch`.
     public var reason: String
     public var message: String
 

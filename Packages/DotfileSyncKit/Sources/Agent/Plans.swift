@@ -86,8 +86,6 @@ struct RunMeta: Sendable {
 
 /// Why a recovered run cannot be resumed.
 enum RunUnrecoverable: Error, Sendable, Equatable {
-    /// `plan.json` is missing or cannot be decoded.
-    case planUnreadable
     /// `meta.json` records no plan digest, so the stored plan cannot be checked.
     case missingPlanDigest
     /// `plan.json` does not hash to the digest recorded when the run started.
@@ -96,7 +94,6 @@ enum RunUnrecoverable: Error, Sendable, Equatable {
     /// Stable `details.reason` value.
     var reason: String {
         switch self {
-        case .planUnreadable: return "plan_unreadable"
         case .missingPlanDigest: return "missing_plan_digest"
         case .planDigestMismatch: return "plan_digest_mismatch"
         }
@@ -104,7 +101,6 @@ enum RunUnrecoverable: Error, Sendable, Equatable {
 
     var message: String {
         switch self {
-        case .planUnreadable: return "its stored plan is missing or unreadable"
         case .missingPlanDigest: return "it has no recorded plan digest"
         case .planDigestMismatch: return "its stored plan does not match the recorded plan digest"
         }
@@ -144,9 +140,13 @@ public final class RunIndex: Sendable {
                     }
                 }
                 switch storedFromDir(dir, meta, ownerUid) {
-                case let .success(stored):
+                case nil:
+                    // No readable plan.json: nothing is loaded. Re-planning the same plan puts
+                    // it back in the store, and resume still checks it against the journal digest.
+                    break
+                case let .success(stored)?:
                     plans.insert(stored)
-                case let .failure(why):
+                case let .failure(why)?:
                     meta.unrecoverable = why
                     log.warn("run \(meta.runId.isEmpty ? dir.string : meta.runId) cannot be resumed: \(why.message)")
                 }
@@ -291,11 +291,12 @@ private func decodePlan(_ bytes: [UInt8]) -> Plan? {
 }
 
 /// The run's stored plan, only when it hashes to the digest recorded when the run started.
-/// Every run this agent writes records that digest (`RunIndex.begin` and the journal header),
-/// so an empty one means the directory was not written by the agent and is not trusted.
-private func storedFromDir(_ dir: FilePath, _ meta: RunMeta, _ ownerUid: UInt32) -> Result<StoredPlan, RunUnrecoverable> {
+/// Every run this agent (and the Rust agent before it) writes records that digest
+/// (`RunIndex.begin` and the journal header), so an empty one means the directory was not
+/// written by the agent and is not trusted. `nil` when there is no readable `plan.json`.
+private func storedFromDir(_ dir: FilePath, _ meta: RunMeta, _ ownerUid: UInt32) -> Result<StoredPlan, RunUnrecoverable>? {
     guard let bytes = readFileBytes(dir.appending("plan.json")), let plan = decodePlan(bytes) else {
-        return .failure(.planUnreadable)
+        return nil
     }
     if meta.planDigest.isEmpty {
         return .failure(.missingPlanDigest)
