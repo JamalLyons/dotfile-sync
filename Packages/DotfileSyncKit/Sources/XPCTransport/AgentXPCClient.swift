@@ -7,6 +7,51 @@ import Synchronization
 import System
 import XPC
 
+/// Signing identifier of the agent binary (`--identifier` in App/Scripts/embed-agent-binaries.sh).
+public let AGENT_SIGNING_IDENTIFIER = "com.jamallyons.dotfilesync.dotfilesyncd"
+
+/// Which code signature the process answering as the agent must carry.
+public enum AgentRequirementPolicy: Sendable, Equatable, CustomStringConvertible {
+    /// Shipping default: the agent must be signed by the same team as this process and carry
+    /// `signingIdentifier`. A same-user launchd job that takes the Mach name is refused.
+    case sameTeam(signingIdentifier: String = AGENT_SIGNING_IDENTIFIER)
+    #if DEBUG
+    /// Debug builds only: no code-signing check on the agent, for ad-hoc-signed local builds
+    /// and tests (which have no team identifier). The same-UID check still applies.
+    case insecureAnySigner
+    #endif
+
+    public var description: String {
+        switch self {
+        case let .sameTeam(id): return "same-team(\(id))"
+        #if DEBUG
+        case .insecureAnySigner: return "any-signer (debug only)"
+        #endif
+        }
+    }
+
+    var requirement: XPCPeerRequirement? {
+        switch self {
+        case let .sameTeam(id): return .isFromSameTeam(andMatchesSigningIdentifier: id)
+        #if DEBUG
+        case .insecureAnySigner: return nil
+        #endif
+        }
+    }
+
+    /// The policy for the live CLI and app. Debug builds honour
+    /// `DOTFILESYNC_INSECURE_ANY_AGENT=1` so they can talk to an agent started with
+    /// `dotfilesyncd --insecure-any-signer`; release builds ignore it.
+    public static func live(environment: [String: String] = ProcessInfo.processInfo.environment) -> AgentRequirementPolicy {
+        #if DEBUG
+        if environment["DOTFILESYNC_INSECURE_ANY_AGENT"] == "1" {
+            return .insecureAnySigner
+        }
+        #endif
+        return .sameTeam()
+    }
+}
+
 /// Why a call to the agent failed at the transport level (typed agent errors arrive as
 /// `Outcome.err` instead).
 public enum AgentXPCClientError: Error, Sendable, CustomStringConvertible {
@@ -14,8 +59,11 @@ public enum AgentXPCClientError: Error, Sendable, CustomStringConvertible {
     case notRunning(reason: String)
     /// The data directory is unsafe (symlink, wrong owner, group/other permissions).
     case dataDir(PathError)
-    /// The process answering is not running as the current user.
-    case impostorAgent(agentUid: UInt32, expected: UInt32)
+    /// The process answering is not running as the current user, or its user cannot be
+    /// determined (`agentUid == nil`). Nothing beyond the identity probe was sent to it.
+    case impostorAgent(agentUid: UInt32?, expected: UInt32)
+    /// The process answering does not carry the agent's code signature.
+    case untrustedAgent(reason: String)
     /// The connection dropped after it had worked (agent crashed or exited).
     case connectionInterrupted(reason: String)
     /// The agent sent something this client cannot understand.
@@ -25,8 +73,12 @@ public enum AgentXPCClientError: Error, Sendable, CustomStringConvertible {
         switch self {
         case let .notRunning(reason): return "dotfilesync agent is not running (\(reason))"
         case let .dataDir(error): return error.description
-        case let .impostorAgent(agentUid, expected):
+        case let .impostorAgent(agentUid?, expected):
             return "the agent is running as uid \(agentUid), not the current user (uid \(expected)); refusing to talk to it"
+        case let .impostorAgent(nil, expected):
+            return "cannot determine which user the agent runs as (expected uid \(expected)); refusing to talk to it"
+        case let .untrustedAgent(reason):
+            return "the process answering as the dotfilesync agent does not carry its code signature (\(reason)); refusing to talk to it"
         case let .connectionInterrupted(reason): return "lost the connection to the dotfilesync agent: \(reason)"
         case let .protocolViolation(message): return "unexpected message from the dotfilesync agent: \(message)"
         }
@@ -48,9 +100,13 @@ public final class AgentXPCClient: Sendable {
     /// Watches in flight, by client-assigned watch id. Each callback runs on the XPC queue.
     private let watches = Mutex<[UInt64: @Sendable (IPC.Notification) -> Bool]>([:])
     private let nextWatchId = Atomic<UInt64>(1)
-    /// Set after the first successful reply; distinguishes "not running" from "went away".
+    /// Set after the identity probe succeeds; distinguishes "not running" from "went away".
     private let connected = Atomic<Bool>(false)
     private let expectedUid = geteuid()
+    /// The code-signing policy the agent must satisfy.
+    public let policy: AgentRequirementPolicy
+    /// Reads the sender's effective UID from a reply. Replaceable in tests only.
+    private let peerUid: @Sendable (XPCDictionary) -> UInt32?
 
     /// Connects to the agent's launchd Mach service.
     ///
@@ -61,36 +117,68 @@ public final class AgentXPCClient: Sendable {
     /// by the connection, not by the directory.
     public convenience init(
         machService: String = AGENT_MACH_SERVICE,
-        layout: DataLayout
+        layout: DataLayout,
+        policy: AgentRequirementPolicy = .sameTeam()
     ) throws(AgentXPCClientError) {
         try Self.checkDataDirs(layout)
-        try self.init { handler throws in
-            try XPCSession(machService: machService, incomingMessageHandler: handler)
+        try self.init(policy: policy, peerUid: peerEuid(of:)) { handler throws in
+            try XPCSession(machService: machService, options: .inactive, incomingMessageHandler: handler)
         }
     }
 
     /// Connects to an anonymous listener endpoint (tests, or an endpoint handed over by the app).
     /// Pass `layout` to apply the same data-directory checks as ``init(machService:layout:)``.
-    public convenience init(endpoint: XPCEndpoint, layout: DataLayout? = nil) throws(AgentXPCClientError) {
+    public convenience init(
+        endpoint: XPCEndpoint,
+        layout: DataLayout? = nil,
+        policy: AgentRequirementPolicy = .sameTeam()
+    ) throws(AgentXPCClientError) {
+        try self.init(endpoint: endpoint, layout: layout, policy: policy, peerUid: peerEuid(of:))
+    }
+
+    /// Endpoint connection with a replaceable UID reader (tests of the fail-closed path).
+    convenience init(
+        endpoint: XPCEndpoint,
+        layout: DataLayout?,
+        policy: AgentRequirementPolicy,
+        peerUid: @escaping @Sendable (XPCDictionary) -> UInt32?
+    ) throws(AgentXPCClientError) {
         if let layout {
             try Self.checkDataDirs(layout)
         }
-        try self.init { handler throws in
-            try XPCSession(endpoint: endpoint, incomingMessageHandler: handler)
+        try self.init(policy: policy, peerUid: peerUid) { handler throws in
+            try XPCSession(endpoint: endpoint, options: .inactive, incomingMessageHandler: handler)
         }
     }
 
+    /// `make` must return an inactive session; the peer requirement is set before activation
+    /// so no message reaches a peer that fails it.
     private init(
+        policy: AgentRequirementPolicy,
+        peerUid: @escaping @Sendable (XPCDictionary) -> UInt32?,
         _ make: (@escaping @Sendable (XPCDictionary) -> XPCDictionary?) throws -> XPCSession
     ) throws(AgentXPCClientError) {
+        self.policy = policy
+        self.peerUid = peerUid
         // `watches` must be reachable from the handler before the session exists, so the handler
         // captures a box that is filled in right after creation.
         let box = WatchTable()
+        let created: XPCSession
         do {
-            session = try make { message in box.route(message) }
+            created = try make { message in box.route(message) }
         } catch {
             throw .notRunning(reason: String(describing: error))
         }
+        if let requirement = policy.requirement {
+            created.setPeerRequirement(requirement)
+        }
+        do {
+            try created.activate()
+        } catch {
+            created.cancel(reason: "activation failed")
+            throw .notRunning(reason: String(describing: error))
+        }
+        session = created
         box.client.withLock { $0 = WeakClient(self) }
     }
 
@@ -175,27 +263,48 @@ public final class AgentXPCClient: Sendable {
         return ack
     }
 
+    /// Sends `message` after the agent's identity has been verified once.
     private func roundTrip(_ message: XPCDictionary) throws(AgentXPCClientError) -> XPCDictionary {
+        if !connected.load(ordering: .acquiring) {
+            try probe()
+        }
+        return try exchange(message)
+    }
+
+    /// Before the first real request (which may carry an approval token), sends a `ping` and
+    /// checks who answered. A peer failing the code-signing requirement never receives it (XPC
+    /// refuses the send), and a peer whose UID is wrong or unknown gets nothing more.
+    private func probe() throws(AgentXPCClientError) {
+        var ping = XPCDictionary()
+        ping[WireKey.request] = encodeJSON(Request.ping) ?? #"{"op":"ping"}"#
+        _ = try exchange(ping)
+        connected.store(true, ordering: .releasing)
+    }
+
+    private func exchange(_ message: XPCDictionary) throws(AgentXPCClientError) -> XPCDictionary {
         let reply: XPCDictionary
         do {
             reply = try session.sendSync(message: message)
         } catch {
             let reason = String(describing: error)
+            if isPeerRequirementFailure(reason) {
+                throw .untrustedAgent(reason: reason)
+            }
             if connected.load(ordering: .relaxed) && !reason.contains("lookup") {
                 throw .connectionInterrupted(reason: reason)
             }
             throw .notRunning(reason: reason)
         }
-        // Same check the Rust client made with peer credentials on the socket. A reply whose
-        // sender cannot be identified is refused, not trusted.
-        guard let agentUid = peerEuid(of: reply) else {
-            throw .protocolViolation("cannot determine which user the agent runs as; refusing to talk to it")
-        }
-        if agentUid != expectedUid {
-            throw .impostorAgent(agentUid: agentUid, expected: expectedUid)
-        }
-        connected.store(true, ordering: .relaxed)
+        try Self.verifyAgentUid(peerUid(reply), expected: expectedUid)
         return reply
+    }
+
+    /// Same check the Rust client made with peer credentials on the socket. A reply whose
+    /// sender cannot be identified is refused, not trusted.
+    static func verifyAgentUid(_ agentUid: UInt32?, expected: UInt32) throws(AgentXPCClientError) {
+        guard let agentUid, agentUid == expected else {
+            throw .impostorAgent(agentUid: agentUid, expected: expected)
+        }
     }
 
     private func decodeOutcome(_ reply: XPCDictionary) throws(AgentXPCClientError) -> Outcome {
@@ -229,4 +338,12 @@ private final class WatchTable: Sendable {
         }
         return target.deliver(message)
     }
+}
+
+/// XPC reports a peer that fails the session's requirement as an `XPCRichError` with no public
+/// code; its description reads "Peer forbidden (code signing)" on macOS 26. Matching the text only
+/// picks the error message: either way the send fails and nothing reaches the peer.
+func isPeerRequirementFailure(_ reason: String) -> Bool {
+    let lower = reason.lowercased()
+    return lower.contains("peer forbidden") || lower.contains("code signing") || lower.contains("requirement")
 }

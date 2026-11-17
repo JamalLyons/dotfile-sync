@@ -35,7 +35,7 @@ private final class Harness {
 
     func client() throws -> AgentXPCClient {
         guard let endpoint = server.endpoint else { throw TestFailure(description: "no endpoint") }
-        return try AgentXPCClient(endpoint: endpoint, layout: env.layout)
+        return try AgentXPCClient(endpoint: endpoint, layout: env.layout, policy: .insecureAnySigner)
     }
 
     deinit {
@@ -225,11 +225,78 @@ private func errorOf(_ outcome: Outcome) -> ProtocolError? {
         #expect(waitUntil(.seconds(5)) { readText(logPath).contains("does not satisfy the code-signing requirement") })
     }
 
+    @Test func unknownAgentUidFailsClosed() {
+        #expect(throws: Never.self) { try AgentXPCClient.verifyAgentUid(geteuid(), expected: geteuid()) }
+        do {
+            try AgentXPCClient.verifyAgentUid(nil, expected: geteuid())
+            Issue.record("nil euid accepted")
+        } catch {
+            guard case .impostorAgent(nil, geteuid()) = error else {
+                Issue.record("wrong error \(error)")
+                return
+            }
+        }
+    }
+
+    @Test func clientWithUnknownAgentUidSendsNoRequest() throws {
+        let h = try Harness(.fast)
+        guard let endpoint = h.server.endpoint else { throw TestFailure(description: "no endpoint") }
+        let c = try AgentXPCClient(endpoint: endpoint, layout: h.env.layout, policy: .insecureAnySigner, peerUid: { _ in nil })
+        do {
+            _ = try c.send(.startJob(spec: scanSpec(h.env)))
+            Issue.record("expected impostorAgent")
+        } catch {
+            guard case .impostorAgent(nil, _) = error else {
+                Issue.record("wrong error \(error)")
+                return
+            }
+        }
+        // Only the identity probe (`ping`) reached the agent: no job was started.
+        let trusted = try h.client()
+        guard case let .jobs(jobs) = try response(trusted, .listJobs) else {
+            throw TestFailure(description: "expected jobs")
+        }
+        #expect(jobs.isEmpty, "\(jobs)")
+    }
+
+    @Test func releasePolicyRefusesAgentWithoutTheAgentSignature() throws {
+        // The in-process agent is ad-hoc signed (no team), so it cannot satisfy the shipping
+        // requirement (same team + `com.jamallyons.dotfilesync.dotfilesyncd`).
+        let h = try Harness(.fast)
+        guard let endpoint = h.server.endpoint else { throw TestFailure(description: "no endpoint") }
+        let c = try AgentXPCClient(endpoint: endpoint, layout: h.env.layout, policy: .sameTeam())
+        #expect(c.policy == .sameTeam(signingIdentifier: AGENT_SIGNING_IDENTIFIER))
+        do {
+            _ = try c.send(.startJob(spec: scanSpec(h.env)))
+            Issue.record("ad-hoc agent was trusted under the release policy")
+        } catch {
+            guard case .untrustedAgent = error else {
+                Issue.record("wrong error \(error)")
+                return
+            }
+        }
+        let trusted = try h.client()
+        guard case let .jobs(jobs) = try response(trusted, .listJobs) else {
+            throw TestFailure(description: "expected jobs")
+        }
+        #expect(jobs.isEmpty, "the request never reached the agent: \(jobs)")
+        // The debug policy accepts the same agent.
+        #expect(try response(trusted, .ping) == .pong)
+    }
+
+    @Test func livePolicyIgnoresTheDebugOverrideUnlessSet() {
+        #expect(AgentRequirementPolicy.live(environment: [:]) == .sameTeam())
+        #expect(AgentRequirementPolicy.live(environment: ["DOTFILESYNC_INSECURE_ANY_AGENT": "0"]) == .sameTeam())
+        #if DEBUG
+        #expect(AgentRequirementPolicy.live(environment: ["DOTFILESYNC_INSECURE_ANY_AGENT": "1"]) == .insecureAnySigner)
+        #endif
+    }
+
     @Test func endpointGoneIsNotRunning() throws {
         let h = try Harness(.fast)
         guard let endpoint = h.server.endpoint else { throw TestFailure(description: "no endpoint") }
         h.server.cancel()
-        let c = try AgentXPCClient(endpoint: endpoint)
+        let c = try AgentXPCClient(endpoint: endpoint, policy: .insecureAnySigner)
         do {
             _ = try c.send(.ping)
             Issue.record("expected failure")

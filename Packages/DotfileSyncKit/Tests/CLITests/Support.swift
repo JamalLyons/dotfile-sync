@@ -234,7 +234,8 @@ func runInProcess(
         readLine: { nil },
         connectAgent: { layout throws(AgentXPCClientError) in
             guard let endpoint else { throw .notRunning(reason: "no test agent") }
-            return try AgentXPCClient(endpoint: endpoint.endpoint, layout: layout)
+            // TEST ONLY: the in-process agent is ad-hoc signed.
+            return try AgentXPCClient(endpoint: endpoint.endpoint, layout: layout, policy: .insecureAnySigner)
         },
         registration: { AgentRegistration(backend: backend) }
     )
