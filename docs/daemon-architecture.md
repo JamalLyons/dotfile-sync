@@ -181,7 +181,10 @@ The Homebrew binary comes from the agent's own configuration, never from a reque
 
 - **Binding:** plan id, resource (`home:<path>`), plan digest, the state fingerprint the plan was
   computed from, and the owner UID. The agent keeps the newest 32 plans in memory, plus plans
-  reloaded from `state/runs/*/plan.json` so an interrupted run can be approved again.
+  reloaded from `state/runs/*/plan.json` so an interrupted run can be approved again. A reloaded
+  plan must hash to the `plan_digest` in the run's `meta.json`. If that digest is empty or does
+  not match, or `plan.json` is unreadable, the plan is not loaded and `plan.resume` fails with
+  `invalid_params` and reason `missing_plan_digest`, `plan_digest_mismatch` or `plan_unreadable`.
 - **Issuing:** `plan.approve` checks the client's digest against the stored plan, then returns a
   random 256-bit token with a 10-minute TTL. The store keeps only `sha256(token)`. Approving a new
   plan for the same home revokes older tokens for that home.
