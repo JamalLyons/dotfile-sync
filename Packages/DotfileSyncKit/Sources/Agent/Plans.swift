@@ -260,7 +260,8 @@ public final class RunIndex: Sendable {
         }
         return RunView(
             runId: meta.runId, planDigest: planDigest, steps: steps,
-            status: meta.status, planId: meta.planId, jobId: meta.jobId
+            status: meta.status, planId: meta.planId, jobId: meta.jobId,
+            notResumable: meta.unrecoverable.map { NotResumable(reason: $0.reason, message: $0.message) }
         )
     }
 

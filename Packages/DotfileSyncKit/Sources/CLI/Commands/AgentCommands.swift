@@ -89,6 +89,9 @@ struct ApplyCommand: ParsableCommand, CLIRunnable {
         let conn = try connect(dataDir, ctx)
         let view = try runView(conn, runId)
         ctx.out("Run \(view.runId) status \(view.status) (plan \(view.planId))")
+        if let why = view.notResumable {
+            throw CLIError("run \(view.runId) cannot be resumed: \(why.message) (\(why.reason))")
+        }
         if dryRun {
             ctx.err("Dry run: nothing was resumed.")
             return

@@ -229,4 +229,7 @@ private let responseCases: [(Response, String)] = [
      #"{"response":"runs","runs":[{"run_id":"r-1","plan_id":"p-1","plan_digest":"d","job_id":"j-1","status":"interrupted"}]}"#),
     (.run(RunView(runId: "r-1", planDigest: "d", steps: [], status: .succeeded, planId: "p-1", jobId: "j-1")),
      #"{"response":"run","run_id":"r-1","plan_digest":"d","steps":[],"status":"succeeded","plan_id":"p-1","job_id":"j-1"}"#),
+    (.run(RunView(runId: "r-1", planDigest: "", steps: [], status: .interrupted, planId: "p-1", jobId: "j-1",
+                  notResumable: NotResumable(reason: "missing_plan_digest", message: "m"))),
+     #"{"response":"run","run_id":"r-1","plan_digest":"","steps":[],"status":"interrupted","plan_id":"p-1","job_id":"j-1","not_resumable":{"reason":"missing_plan_digest","message":"m"}}"#),
 ]

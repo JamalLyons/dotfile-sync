@@ -545,6 +545,9 @@ public struct RunView: Codable, Sendable, Equatable {
     public var status: RunViewStatus
     public var planId: String
     public var jobId: String
+    /// Set when the agent will refuse to resume this run because its stored plan cannot be
+    /// trusted (`plan.resume` fails with this reason). Omitted from JSON when `nil`.
+    public var notResumable: NotResumable?
 
     public init(
         runId: String,
@@ -552,7 +555,8 @@ public struct RunView: Codable, Sendable, Equatable {
         steps: [StepRecord],
         status: RunViewStatus,
         planId: String,
-        jobId: String
+        jobId: String,
+        notResumable: NotResumable? = nil
     ) {
         self.runId = runId
         self.planDigest = planDigest
@@ -560,6 +564,7 @@ public struct RunView: Codable, Sendable, Equatable {
         self.status = status
         self.planId = planId
         self.jobId = jobId
+        self.notResumable = notResumable
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -568,11 +573,24 @@ public struct RunView: Codable, Sendable, Equatable {
         case steps, status
         case planId = "plan_id"
         case jobId = "job_id"
+        case notResumable = "not_resumable"
     }
 
     /// The run as a core ``RunJournal``.
     public var journal: RunJournal {
         RunJournal(runId: runId, planDigest: planDigest, steps: steps)
+    }
+}
+
+/// Why a run cannot be resumed (`RunView.notResumable`).
+public struct NotResumable: Codable, Sendable, Equatable {
+    /// Stable code: `missing_plan_digest`, `plan_digest_mismatch` or `plan_unreadable`.
+    public var reason: String
+    public var message: String
+
+    public init(reason: String, message: String) {
+        self.reason = reason
+        self.message = message
     }
 }
 

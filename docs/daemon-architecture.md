@@ -185,6 +185,8 @@ The Homebrew binary comes from the agent's own configuration, never from a reque
   plan must hash to the `plan_digest` in the run's `meta.json`. If that digest is empty or does
   not match, or `plan.json` is unreadable, the plan is not loaded and `plan.resume` fails with
   `invalid_params` and reason `missing_plan_digest`, `plan_digest_mismatch` or `plan_unreadable`.
+  `plan.run_status` reports the same reason as `not_resumable: {reason, message}`, so clients
+  (and `dotfilesync apply --resume`) refuse before asking for an approval.
 - **Issuing:** `plan.approve` checks the client's digest against the stored plan, then returns a
   random 256-bit token with a 10-minute TTL. The store keeps only `sha256(token)`. Approving a new
   plan for the same home revokes older tokens for that home.
