@@ -79,8 +79,15 @@ Every message is authenticated twice:
    peer connection (`xpc_connection_get_euid`, which comes from the kernel audit token). No UID
    field exists in any request. `AgentService` refuses requests whose UID differs from its own
    `ownerUid` (`geteuid()` at startup). The client checks the reverse: if the agent's reply comes
-   from a different UID, the client fails with `impostorAgent`, and a reply whose sender UID
-   cannot be read is refused rather than trusted.
+   from a different UID, or its sender UID cannot be read, the client fails with `impostorAgent`.
+
+The client also authenticates the agent before sending it anything that matters. Its XPC session
+requires the peer to be signed by the same team and carry the signing identifier
+`com.jamallyons.dotfilesync.dotfilesyncd`, so a same-user launchd job that takes the Mach name
+cannot receive requests or approval tokens (`untrustedAgent`). On a new connection the client
+first sends `ping` and checks the reply's UID; only then does it send the real request. Debug
+builds of the CLI and app accept any agent signature when `DOTFILESYNC_INSECURE_ANY_AGENT=1` is
+set (to talk to an ad-hoc agent started with `--insecure-any-signer`); release builds ignore it.
 
 Before connecting, the client also checks (without creating or repairing) that any existing
 data directories are private (§4). A missing data dir is not an error: looking up the Mach

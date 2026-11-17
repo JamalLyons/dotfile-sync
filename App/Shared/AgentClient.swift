@@ -107,7 +107,7 @@ final class LiveAgentClient: AgentClient {
         }
         let created: AgentXPCClient
         do {
-            created = try AgentXPCClient(machService: machService, layout: layout)
+            created = try AgentXPCClient(machService: machService, layout: layout, policy: .live())
         } catch {
             throw Self.map(error)
         }

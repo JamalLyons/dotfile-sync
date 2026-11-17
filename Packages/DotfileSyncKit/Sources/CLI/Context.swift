@@ -62,7 +62,7 @@ public struct CLIContext: Sendable {
             stdinIsTerminal: isatty(STDIN_FILENO) == 1,
             readLine: { Swift.readLine(strippingNewline: true) },
             connectAgent: { layout throws(AgentXPCClientError) in
-                try AgentXPCClient(machService: AGENT_MACH_SERVICE, layout: layout)
+                try AgentXPCClient(machService: AGENT_MACH_SERVICE, layout: layout, policy: .live())
             },
             registration: { AgentRegistration() }
         )
