@@ -80,6 +80,31 @@ struct RunMeta: Sendable {
     var jobId: String
     var status: RunViewStatus
     var profile: String?
+    /// Set at recovery when the run's stored plan cannot be trusted for resume.
+    var unrecoverable: RunUnrecoverable? = nil
+}
+
+/// Why a recovered run cannot be resumed.
+enum RunUnrecoverable: Error, Sendable, Equatable {
+    /// `meta.json` records no plan digest, so the stored plan cannot be checked.
+    case missingPlanDigest
+    /// `plan.json` does not hash to the digest recorded when the run started.
+    case planDigestMismatch
+
+    /// Stable `details.reason` value.
+    var reason: String {
+        switch self {
+        case .missingPlanDigest: return "missing_plan_digest"
+        case .planDigestMismatch: return "plan_digest_mismatch"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .missingPlanDigest: return "it has no recorded plan digest"
+        case .planDigestMismatch: return "its stored plan does not match the recorded plan digest"
+        }
+    }
 }
 
 /// Durable apply runs under `state/runs`.
@@ -114,8 +139,16 @@ public final class RunIndex: Sendable {
                         log.warn("could not mark run \(meta.runId) interrupted: \(error)")
                     }
                 }
-                if let stored = storedFromDir(dir, meta, ownerUid) {
+                switch storedFromDir(dir, meta, ownerUid) {
+                case nil:
+                    // No readable plan.json: nothing is loaded. Re-planning the same plan puts
+                    // it back in the store, and resume still checks it against the journal digest.
+                    break
+                case let .success(stored)?:
                     plans.insert(stored)
+                case let .failure(why)?:
+                    meta.unrecoverable = why
+                    log.warn("run \(meta.runId.isEmpty ? dir.string : meta.runId) cannot be resumed: \(why.message)")
                 }
                 index.inner.withLock { $0.append(meta) }
             case let .failure(error):
@@ -227,8 +260,14 @@ public final class RunIndex: Sendable {
         }
         return RunView(
             runId: meta.runId, planDigest: planDigest, steps: steps,
-            status: meta.status, planId: meta.planId, jobId: meta.jobId
+            status: meta.status, planId: meta.planId, jobId: meta.jobId,
+            notResumable: meta.unrecoverable.map { NotResumable(reason: $0.reason, message: $0.message) }
         )
+    }
+
+    /// Why the run with `runId` cannot be resumed, if recovery found its stored plan untrusted.
+    func unrecoverable(_ runId: String) -> RunUnrecoverable? {
+        inner.withLock { $0.first { $0.runId == runId }?.unrecoverable }
     }
 
     /// True while a run with `runId` is marked running.
@@ -251,12 +290,19 @@ private func decodePlan(_ bytes: [UInt8]) -> Plan? {
     try? JSONDecoder().decode(Plan.self, from: Data(bytes))
 }
 
-private func storedFromDir(_ dir: FilePath, _ meta: RunMeta, _ ownerUid: UInt32) -> StoredPlan? {
+/// The run's stored plan, only when it hashes to the digest recorded when the run started.
+/// Every run this agent (and the Rust agent before it) writes records that digest
+/// (`RunIndex.begin` and the journal header), so an empty one means the directory was not
+/// written by the agent and is not trusted. `nil` when there is no readable `plan.json`.
+private func storedFromDir(_ dir: FilePath, _ meta: RunMeta, _ ownerUid: UInt32) -> Result<StoredPlan, RunUnrecoverable>? {
     guard let bytes = readFileBytes(dir.appending("plan.json")), let plan = decodePlan(bytes) else {
         return nil
     }
-    if plan.digest != meta.planDigest && !meta.planDigest.isEmpty {
-        return nil
+    if meta.planDigest.isEmpty {
+        return .failure(.missingPlanDigest)
+    }
+    if plan.digest != meta.planDigest {
+        return .failure(.planDigestMismatch)
     }
     let input = PlanInput(
         manifest: plan.manifestPath,
@@ -264,7 +310,7 @@ private func storedFromDir(_ dir: FilePath, _ meta: RunMeta, _ ownerUid: UInt32)
         repoRoot: plan.repoRoot,
         profile: meta.profile ?? plan.profile
     )
-    return StoredPlan(plan: plan, input: input, ownerUid: ownerUid)
+    return .success(StoredPlan(plan: plan, input: input, ownerUid: ownerUid))
 }
 
 private func loadRun(_ dir: FilePath) -> Result<RunMeta, RunLoadError> {

@@ -236,6 +236,9 @@ public func renderRun(_ journal: RunJournal) -> String {
 /// Human run view (`runs show`).
 func renderRunView(_ view: RunView) -> String {
     var out = "Run \(view.runId)  \(view.status)  plan \(view.planId)  job \(view.jobId)\n"
+    if let why = view.notResumable {
+        out += "Cannot be resumed: \(why.message) (\(why.reason))\n"
+    }
     if view.steps.isEmpty {
         out += "No steps recorded.\n"
         return out

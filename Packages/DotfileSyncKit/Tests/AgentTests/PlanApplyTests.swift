@@ -179,4 +179,57 @@ private func countFiles(_ dir: FilePath) -> Int {
         #expect(finished.status == .succeeded, "\(finished)")
         #expect(readText(target) == "desired\n")
     }
+
+    /// A run left by a previous process whose `meta.json` digest is empty or wrong must not be
+    /// resumable: its `plan.json` cannot be checked against what was approved.
+    @Test(arguments: [("", "missing_plan_digest"), ("0000", "plan_digest_mismatch")])
+    func recoveredRunWithoutMatchingDigestIsNotResumable(metaDigest: String, reason: String) throws {
+        let env = try Env(.fast)
+        try env.start().shutdown()
+
+        let repo = env.tmp.appending("repo")
+        try FileManager.default.createDirectory(atPath: repo.string, withIntermediateDirectories: true)
+        let target = env.home.appending(".config/demo/config.txt")
+        let plan = Plan(
+            schema: PLAN_SCHEMA,
+            profile: nil,
+            manifestPath: repo.appending("dotfilesync.toml"),
+            home: env.home,
+            repoRoot: repo,
+            actions: [PlanAction(
+                id: "a-001",
+                kind: .copyFile(source: repo.appending("config.txt"), target: target),
+                summary: "copy config",
+                risk: .medium,
+                reversible: true,
+                backup: true
+            )],
+            stateFingerprint: "fingerprint-for-resume"
+        )
+        let runId = "r-nodigest00001"
+        let runDir = env.layout.runsDir.appending(runId)
+        try FileManager.default.createDirectory(atPath: runDir.string, withIntermediateDirectories: true)
+        chmod(runDir.string, 0o700)
+        try jsonStringCompact(plan).write(toFile: runDir.appending("plan.json").string, atomically: false, encoding: .utf8)
+        let header = #"{"event":"header","run_id":"\#(runId)","plan_digest":"\#(plan.digest)"}"#
+        let step = #"{"event":"step","action_id":"a-001","status":"running","at_ms":1}"#
+        try "\(header)\n\(step)\n".write(toFile: runDir.appending("journal.jsonl").string, atomically: false, encoding: .utf8)
+        let meta = #"{"run_id":"\#(runId)","plan_id":"\#(plan.planId)","plan_digest":"\#(metaDigest)","job_id":"j-old0001","status":"running"}"#
+        let metaPath = runDir.appending("meta.json")
+        try meta.write(toFile: metaPath.string, atomically: false, encoding: .utf8)
+        chmod(metaPath.string, 0o600)
+
+        let d = try env.start()
+        defer { d.shutdown() }
+        let found = try #require(try d.planRuns().first { $0.runId == runId }, "run still listed")
+        #expect(found.status == .interrupted)
+        #expect(errorCode { try d.planApprove(plan.planId, plan.digest) }?.code == .planNotFound,
+                "the untrusted plan is not loaded into the plan store")
+
+        let refused = errorCode { try d.planResume(runId, "any-token", false) }
+        #expect(refused?.code == .invalidParams)
+        #expect(refused?.reason == reason)
+        #expect(refused?.message.contains("cannot be resumed") == true)
+        #expect(readText(env.layout.logFile).contains("run \(runId) cannot be resumed"))
+    }
 }

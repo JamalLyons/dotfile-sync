@@ -335,6 +335,10 @@ public final class JobManager: Sendable {
         if view.status == .succeeded {
             throw invalid("run '\(runId)' already completed")
         }
+        if let why = runs.unrecoverable(runId) {
+            throw invalid("run '\(runId)' cannot be resumed: \(why.message)")
+                .withDetails(.object([("reason", .string(why.reason))]))
+        }
         guard let stored = plans.get(view.planId) else {
             throw planNotFound(view.planId)
         }

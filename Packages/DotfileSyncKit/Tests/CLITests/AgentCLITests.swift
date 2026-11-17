@@ -5,6 +5,8 @@
 // need a running agent run `AgentService` behind an anonymous XPC listener and run the CLI
 // in-process against its endpoint. `service` uses a fake `AgentServiceBackend`.
 
+import Core
+import Darwin
 import Foundation
 import IPC
 import System
@@ -232,5 +234,52 @@ private func manifest() -> String {
             let run = try env.cli(args).failure()
             #expect(run.stderr.contains("not running"), "\(args)")
         }
+    }
+
+    /// `apply --resume` on a run whose stored plan has no digest stops before asking for an
+    /// approval (which would fail as `plan_not_found`) and names the reason. `runs show` says so.
+    @Test func resumeOfRunWithoutPlanDigestIsRefusedBeforeApproval() throws {
+        let env = try Env(.gitOnly)
+        let repo = env.tmp.appending("repo")
+        try FileManager.default.createDirectory(atPath: repo.string, withIntermediateDirectories: true)
+        let plan = Plan(
+            schema: PLAN_SCHEMA,
+            profile: nil,
+            manifestPath: repo.appending("dotfilesync.toml"),
+            home: env.home,
+            repoRoot: repo,
+            actions: [PlanAction(
+                id: "a-001",
+                kind: .copyFile(source: repo.appending("config.txt"), target: env.home.appending(".demo")),
+                summary: "copy config",
+                risk: .medium,
+                reversible: true,
+                backup: true
+            )],
+            stateFingerprint: "fp"
+        )
+        let runId = "r-nodigestcli001"
+        try env.layout.ensurePrivateDirs()
+        let runDir = env.layout.runsDir.appending(runId)
+        try FileManager.default.createDirectory(atPath: runDir.string, withIntermediateDirectories: true)
+        chmod(runDir.string, 0o700)
+        let planJSON = String(decoding: try JSONEncoder().encode(plan), as: UTF8.self)
+        try planJSON.write(toFile: runDir.appending("plan.json").string, atomically: false, encoding: .utf8)
+        let header = #"{"event":"header","run_id":"\#(runId)","plan_digest":"\#(plan.digest)"}"#
+        let step = #"{"event":"step","action_id":"a-001","status":"running","at_ms":1}"#
+        try "\(header)\n\(step)\n".write(toFile: runDir.appending("journal.jsonl").string, atomically: false, encoding: .utf8)
+        let meta = #"{"run_id":"\#(runId)","plan_id":"\#(plan.planId)","plan_digest":"","job_id":"j-old","status":"running"}"#
+        try meta.write(toFile: runDir.appending("meta.json").string, atomically: false, encoding: .utf8)
+        chmod(runDir.appending("meta.json").string, 0o600)
+
+        let agent = try TestAgent(env)
+        let endpoint = try agent.endpoint
+        let resume = runInProcess(["apply", "--resume", runId, "--yes"], env: env, endpoint: endpoint).failure()
+        #expect(resume.stderr.contains("cannot be resumed"), "\(resume.stderr)")
+        #expect(resume.stderr.contains("missing_plan_digest"), "\(resume.stderr)")
+        #expect(!resume.stderr.contains("PlanNotFound") && !resume.stderr.contains("no plan with id"), "\(resume.stderr)")
+
+        let show = runInProcess(["runs", "show", runId], env: env, endpoint: endpoint).success()
+        #expect(show.stdout.contains("Cannot be resumed"), "\(show.stdout)")
     }
 }
