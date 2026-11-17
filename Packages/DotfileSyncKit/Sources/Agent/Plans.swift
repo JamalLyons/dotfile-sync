@@ -148,7 +148,7 @@ public final class RunIndex: Sendable {
                     plans.insert(stored)
                 case let .failure(why):
                     meta.unrecoverable = why
-                    log.warn("run \(meta.runId) cannot be resumed: \(why.message)")
+                    log.warn("run \(meta.runId.isEmpty ? dir.string : meta.runId) cannot be resumed: \(why.message)")
                 }
                 index.inner.withLock { $0.append(meta) }
             case let .failure(error):
