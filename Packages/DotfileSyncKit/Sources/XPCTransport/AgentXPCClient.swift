@@ -15,27 +15,23 @@ public enum AgentRequirementPolicy: Sendable, Equatable, CustomStringConvertible
     /// Shipping default: the agent must be signed by the same team as this process and carry
     /// `signingIdentifier`. A same-user launchd job that takes the Mach name is refused.
     case sameTeam(signingIdentifier: String = AGENT_SIGNING_IDENTIFIER)
-    #if DEBUG
-    /// Debug builds only: no code-signing check on the agent, for ad-hoc-signed local builds
-    /// and tests (which have no team identifier). The same-UID check still applies.
+    /// Tests and debug builds only: no code-signing check on the agent, for ad-hoc-signed local
+    /// builds (which have no team identifier). The same-UID check still applies. The shipping
+    /// CLI and app pick their policy with ``live(environment:)``, which never returns this in a
+    /// release build.
     case insecureAnySigner
-    #endif
 
     public var description: String {
         switch self {
         case let .sameTeam(id): return "same-team(\(id))"
-        #if DEBUG
-        case .insecureAnySigner: return "any-signer (debug only)"
-        #endif
+        case .insecureAnySigner: return "any-signer (development only)"
         }
     }
 
     var requirement: XPCPeerRequirement? {
         switch self {
         case let .sameTeam(id): return .isFromSameTeam(andMatchesSigningIdentifier: id)
-        #if DEBUG
         case .insecureAnySigner: return nil
-        #endif
         }
     }
 
@@ -251,7 +247,11 @@ public final class AgentXPCClient: Sendable {
 
     fileprivate func deliver(_ message: XPCDictionary) -> XPCDictionary {
         var ack = XPCDictionary()
-        guard let id: UInt64 = message[WireKey.watchId],
+        // Notifications only count from a verified agent: after the identity probe, and from a
+        // sender running as this user. Anything else stops the watch without running a callback.
+        guard connected.load(ordering: .acquiring),
+              (try? Self.verifyAgentUid(peerUid(message), expected: expectedUid)) != nil,
+              let id: UInt64 = message[WireKey.watchId],
               let json: String = message[WireKey.notification],
               let notification = try? JSONDecoder().decode(IPC.Notification.self, from: Data(json.utf8)),
               let callback = watches.withLock({ $0[id] })
@@ -291,6 +291,8 @@ public final class AgentXPCClient: Sendable {
                 throw .untrustedAgent(reason: reason)
             }
             if connected.load(ordering: .relaxed) && !reason.contains("lookup") {
+                // Whatever answers after a reconnect is verified again before the next request.
+                connected.store(false, ordering: .releasing)
                 throw .connectionInterrupted(reason: reason)
             }
             throw .notRunning(reason: reason)
@@ -345,5 +347,5 @@ private final class WatchTable: Sendable {
 /// picks the error message: either way the send fails and nothing reaches the peer.
 func isPeerRequirementFailure(_ reason: String) -> Bool {
     let lower = reason.lowercased()
-    return lower.contains("peer forbidden") || lower.contains("code signing") || lower.contains("requirement")
+    return lower.contains("peer forbidden") || lower.contains("code signing")
 }

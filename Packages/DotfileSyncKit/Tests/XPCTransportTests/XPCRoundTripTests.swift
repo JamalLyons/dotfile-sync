@@ -289,7 +289,31 @@ private func errorOf(_ outcome: Outcome) -> ProtocolError? {
         #expect(AgentRequirementPolicy.live(environment: ["DOTFILESYNC_INSECURE_ANY_AGENT": "0"]) == .sameTeam())
         #if DEBUG
         #expect(AgentRequirementPolicy.live(environment: ["DOTFILESYNC_INSECURE_ANY_AGENT": "1"]) == .insecureAnySigner)
+        #else
+        #expect(AgentRequirementPolicy.live(environment: ["DOTFILESYNC_INSECURE_ANY_AGENT": "1"]) == .sameTeam())
         #endif
+    }
+
+    @Test func notificationsBeforeTheIdentityProbeAreIgnored() throws {
+        // A peer that pushes a watch notification before answering the probe must not reach
+        // the watch callback.
+        let callbackRan = Mutex(false)
+        let listener = XPCListener(targetQueue: nil, options: .none) { request in
+            request.accept { (session: XPCSession) -> PushFirstHandler in PushFirstHandler(session: session) }
+        }
+        defer { listener.cancel() }
+        let c = try AgentXPCClient(endpoint: listener.endpoint, layout: nil, policy: .insecureAnySigner, peerUid: { _ in nil })
+        let result = Result { () throws(AgentXPCClientError) -> Outcome? in
+            try c.watch(jobId: "j-1") { _ in
+                callbackRan.withLock { $0 = true }
+                return true
+            }
+        }
+        guard case .failure(.impostorAgent(nil, _)) = result else {
+            Issue.record("expected impostorAgent, got \(result)")
+            return
+        }
+        #expect(!callbackRan.withLock { $0 }, "a notification from an unverified peer ran the callback")
     }
 
     @Test func endpointGoneIsNotRunning() throws {
@@ -353,5 +377,20 @@ private func errorOf(_ outcome: Outcome) -> ProtocolError? {
                 return
             }
         }
+    }
+}
+
+/// Test peer: sends a `watch_id` 1 notification before replying to each message.
+private struct PushFirstHandler: XPCPeerHandler {
+    let session: XPCSession
+
+    func handleIncomingRequest(_ message: XPCDictionary) -> XPCDictionary? {
+        var note = XPCDictionary()
+        note[WireKey.watchId] = UInt64(1)
+        note[WireKey.notification] = encodeJSON(IPC.Notification.heartbeat)
+        _ = try? session.sendSync(message: note)
+        var reply = XPCDictionary()
+        reply[WireKey.outcome] = encodeJSON(Outcome.ok(.pong))
+        return reply
     }
 }
