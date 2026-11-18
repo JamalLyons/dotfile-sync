@@ -135,9 +135,13 @@ Each XPC message is a dictionary that carries the IPC JSON as a UTF-8 string:
 | agent → client (reply) | `{ "outcome": <Outcome JSON> }` or `{ "watch_stopped": true }` |
 | agent → client (during a watch) | `{ "watch_id": N, "notification": <Notification JSON> }`, answered by `{ "continue": <bool> }` |
 
-Each request is answered on a worker queue, so a long `watch_job` does not block other requests
-on the same session. A watch holds its worker for as long as it runs, so at most 16 watches
-(`JobLimits.maxWatches`) run at once; more are refused with `busy`. Watch notifications are sent synchronously, one ack each. That keeps them in
+Each request is answered off the session queue, so a long `watch_job` does not block other
+requests on the same session. Ordinary requests (`ping`, `cancel_job`, ...) run on a shared worker
+queue. A watch runs on its own thread for as long as it lasts and never occupies that queue, so
+open watches cannot starve `ping` or `cancel_job`. Before a watch gets a thread it must fit two
+caps (`WatchLimits`): at most 4 open watches per peer session and at most 16 across all sessions
+(defaulting to `JobLimits.maxWatches`, which `AgentService.watch` also enforces). A watch beyond
+either cap is refused at once with `busy`. Watch notifications are sent synchronously, one ack each. That keeps them in
 order, applies back-pressure, and lets the agent notice a client that went away: the send fails,
 the watch stops, and the job keeps running.
 
