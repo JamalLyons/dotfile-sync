@@ -211,9 +211,13 @@ public final class AgentXPCServer: Sendable {
         }
         let data = Data(body.utf8)
         let pending = PendingReply(message)
-        if let watchId: UInt64 = message[WireKey.watchId], data.count <= MAX_REQUEST_BYTES,
-           case let .watchJob(jobId, sinceSeq)? = try? Request.decode(json: data)
-        {
+        let watchId: UInt64? = message[WireKey.watchId]
+        if data.count <= MAX_REQUEST_BYTES, case let .watchJob(jobId, sinceSeq)? = try? Request.decode(json: data) {
+            // A watch streams over `watch_id`; without one it would block a shared worker.
+            guard let watchId else {
+                pending.reply(outcomeReply(.err(ProtocolError(.malformedRequest, "'watch_job' needs a '\(WireKey.watchId)'"))))
+                return
+            }
             // Admit before a thread is spent, so refused watches cost nothing and admitted
             // ones never occupy the shared worker queue.
             if let refused = admitWatch(watches) {
@@ -303,7 +307,7 @@ private struct SessionHandler: XPCPeerHandler {
 
     func handleIncomingRequest(_ message: XPCDictionary) -> XPCDictionary? {
         server.handle(message, session: session, watches: watches)
-        // Replies are sent asynchronously from the worker thread.
+        // Replies are sent asynchronously from a worker or watch thread.
         return nil
     }
 

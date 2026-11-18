@@ -141,7 +141,8 @@ queue. A watch runs on its own thread for as long as it lasts and never occupies
 open watches cannot starve `ping` or `cancel_job`. Before a watch gets a thread it must fit two
 caps (`WatchLimits`): at most 4 open watches per peer session and at most 16 across all sessions
 (defaulting to `JobLimits.maxWatches`, which `AgentService.watch` also enforces). A watch beyond
-either cap is refused at once with `busy`. Watch notifications are sent synchronously, one ack each. That keeps them in
+either cap is refused at once with `busy`. A `watch_job` sent without `watch_id` is refused
+with `malformed_request`. Watch notifications are sent synchronously, one ack each. That keeps them in
 order, applies back-pressure, and lets the agent notice a client that went away: the send fails,
 the watch stops, and the job keeps running.
 

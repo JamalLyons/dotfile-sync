@@ -217,6 +217,20 @@ private func errorOf(_ outcome: Outcome) -> ProtocolError? {
         _ = guardPid
     }
 
+    @Test func watchWithoutWatchIdIsRefusedWithoutBlocking() throws {
+        let h = try Harness(.hang)
+        let c = try h.client()
+        let job = try startJob(c, scanSpec(h.env))
+        let guardPid = PidGuard(try h.env.waitForBrewPid())
+        let json = try #require(encodeJSON(Request.watchJob(jobId: job.jobId, sinceSeq: 0)))
+        let started = ContinuousClock.now
+        let outcome = try c.send(json: Data(json.utf8))
+        #expect(errorOf(outcome)?.code == .malformedRequest)
+        #expect(ContinuousClock.now - started < .seconds(1))
+        _ = try response(c, .cancelJob(jobId: job.jobId))
+        _ = guardPid
+    }
+
     @Test func malformedAndOversizedRequestsGetTypedErrors() throws {
         let h = try Harness(.fast)
         let c = try h.client()
