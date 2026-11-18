@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ master, swift-rewrite, "feature/**" ]
+    branches: [ trunk, "feature/**" ]
   pull_request:
-    branches: [ master ]
+    branches: [ trunk ]
 
 jobs:
   package:
