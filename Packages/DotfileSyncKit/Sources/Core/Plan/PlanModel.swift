@@ -31,6 +31,20 @@ public enum ActionKind: Codable, Sendable, Equatable {
     case installFisher
     case fisherUpdate
     case setLoginShell(shell: FilePath)
+    /// Copy the machine file `target` (bytes and mode) to the repository path `source`, then
+    /// append a `[[files]]` entry (`entrySource` → `entryTarget`) to `manifest`. Apply fails
+    /// closed unless `target` still hashes to `targetSha256`.
+    case promoteFile(
+        target: FilePath,
+        source: FilePath,
+        manifest: FilePath,
+        entrySource: String,
+        entryTarget: String,
+        targetSha256: String
+    )
+    /// Remove the base `[[files]]` entry for `target` (`entryTarget` as written) from
+    /// `manifest`. The machine file and the repository source are left untouched.
+    case demoteFile(target: FilePath, manifest: FilePath, entryTarget: String)
 
     /// The serde tag value for this variant.
     public var tag: String {
@@ -43,11 +57,16 @@ public enum ActionKind: Codable, Sendable, Equatable {
         case .installFisher: return "install_fisher"
         case .fisherUpdate: return "fisher_update"
         case .setLoginShell: return "set_login_shell"
+        case .promoteFile: return "promote_file"
+        case .demoteFile: return "demote_file"
         }
     }
 
     private enum CodingKeys: String, CodingKey {
-        case kind, name, source, target, template, shell
+        case kind, name, source, target, template, shell, manifest
+        case entrySource = "entry_source"
+        case entryTarget = "entry_target"
+        case targetSha256 = "target_sha256"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -76,6 +95,21 @@ public enum ActionKind: Codable, Sendable, Equatable {
             self = .fisherUpdate
         case "set_login_shell":
             self = .setLoginShell(shell: try path(.shell))
+        case "promote_file":
+            self = .promoteFile(
+                target: try path(.target),
+                source: try path(.source),
+                manifest: try path(.manifest),
+                entrySource: try c.decode(String.self, forKey: .entrySource),
+                entryTarget: try c.decode(String.self, forKey: .entryTarget),
+                targetSha256: try c.decode(String.self, forKey: .targetSha256)
+            )
+        case "demote_file":
+            self = .demoteFile(
+                target: try path(.target),
+                manifest: try path(.manifest),
+                entryTarget: try c.decode(String.self, forKey: .entryTarget)
+            )
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .kind, in: c, debugDescription: "unknown variant `\(kind)`"
@@ -99,6 +133,17 @@ public enum ActionKind: Codable, Sendable, Equatable {
             break
         case let .setLoginShell(shell):
             try c.encode(shell.string, forKey: .shell)
+        case let .promoteFile(target, source, manifest, entrySource, entryTarget, targetSha256):
+            try c.encode(target.string, forKey: .target)
+            try c.encode(source.string, forKey: .source)
+            try c.encode(manifest.string, forKey: .manifest)
+            try c.encode(entrySource, forKey: .entrySource)
+            try c.encode(entryTarget, forKey: .entryTarget)
+            try c.encode(targetSha256, forKey: .targetSha256)
+        case let .demoteFile(target, manifest, entryTarget):
+            try c.encode(target.string, forKey: .target)
+            try c.encode(manifest.string, forKey: .manifest)
+            try c.encode(entryTarget, forKey: .entryTarget)
         }
     }
 }

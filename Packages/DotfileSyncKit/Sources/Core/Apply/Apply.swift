@@ -243,7 +243,7 @@ private func drive(
         progress(running)
 
         let record: StepRecord
-        switch execute(plan.actions[index].kind, plan, ctx, runId) {
+        switch execute(plan.actions[index].kind, plan, ctx, runId, plan.actions[index].id) {
         case let .success(outcome):
             record = StepRecord(
                 actionId: running.actionId,
@@ -275,7 +275,8 @@ private func execute(
     _ kind: ActionKind,
     _ plan: Plan,
     _ ctx: ApplyContext,
-    _ runId: String
+    _ runId: String,
+    _ actionId: String
 ) -> Result<Outcome, ApplyIOError> {
     do throws(ApplyIOError) {
         switch kind {
@@ -334,9 +335,31 @@ private func execute(
             return .success(.done)
         case let .setLoginShell(shell):
             return .success(try setLoginShell(ctx, shell))
+        case let .promoteFile(target, source, manifest, entrySource, entryTarget, targetSha256):
+            try requirePlanManifest(plan, manifest)
+            let outcome = try applyPromote(
+                target: target, source: source, manifest: manifest, entrySource: entrySource,
+                entryTarget: entryTarget, targetSha256: targetSha256, plan: plan, ctx: ctx,
+                runId: runId, actionId: actionId
+            )
+            return .success(Outcome(status: outcome.status, backupPath: outcome.backupPath))
+        case let .demoteFile(target, manifest, entryTarget):
+            try requirePlanManifest(plan, manifest)
+            let outcome = try applyDemote(
+                target: target, manifest: manifest, entryTarget: entryTarget, plan: plan, ctx: ctx,
+                runId: runId, actionId: actionId
+            )
+            return .success(Outcome(status: outcome.status, backupPath: outcome.backupPath))
         }
     } catch {
         return .failure(error)
+    }
+}
+
+/// Manifest-change actions may only edit the plan's own manifest.
+private func requirePlanManifest(_ plan: Plan, _ manifest: FilePath) throws(ApplyIOError) {
+    if !rustPathEqual(plan.manifestPath, manifest) {
+        throw ApplyIOError("action edits '\(manifest.string)', not the plan's manifest '\(plan.manifestPath.string)'")
     }
 }
 
