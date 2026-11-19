@@ -24,13 +24,18 @@ private final class Harness {
     let server: AgentXPCServer
     let log: Logger
 
-    init(_ mode: Brew, policy: PeerRequirementPolicy = .insecureAnySigner, ownerUid: UInt32 = geteuid()) throws {
+    init(
+        _ mode: Brew,
+        policy: PeerRequirementPolicy = .insecureAnySigner,
+        ownerUid: UInt32 = geteuid(),
+        watchLimits: WatchLimits? = nil
+    ) throws {
         env = try Env(mode)
         var config = env.config()
         config.ownerUid = ownerUid
         service = try env.start(config)
         log = try Logger(path: env.layout.logsDir.appending("xpc.log"), maxBytes: 64 * 1024, keep: 1)
-        server = try AgentXPCServer(anonymousFor: service, policy: policy, log: log)
+        server = try AgentXPCServer(anonymousFor: service, policy: policy, watchLimits: watchLimits, log: log)
     }
 
     func client() throws -> AgentXPCClient {
@@ -159,6 +164,71 @@ private func errorOf(_ outcome: Outcome) -> ProtocolError? {
         let outcome = try c.watch(jobId: job.jobId) { _ in false }
         #expect(outcome == nil)
         #expect(waitUntil(.seconds(15)) { (try? jobStatus(c, job.jobId).status) == .succeeded })
+    }
+
+    @Test func watchesBeyondTheCapsAreBusyAndPingStillAnswers() throws {
+        let h = try Harness(.hang, watchLimits: WatchLimits(global: 3, perSession: 2))
+        let first = try h.client()
+        let second = try h.client()
+        let job = try startJob(first, scanSpec(h.env))
+        let guardPid = PidGuard(try h.env.waitForBrewPid())
+
+        // Two watches on `first` (its cap) and one on `second` fill the global cap.
+        let open = [first, first, second]
+        let finished = Atomic<Int>(0)
+        for client in open {
+            Thread {
+                _ = try? client.watch(jobId: job.jobId) { _ in true }
+                finished.add(1, ordering: .relaxed)
+            }.start()
+        }
+        #expect(waitUntil(.seconds(5)) { h.server.watchCount == 3 })
+
+        let perSession = try first.watch(jobId: job.jobId) { _ in true }
+        #expect(perSession.flatMap(errorOf)?.code == .busy, "third watch on one session: \(String(describing: perSession))")
+        let global = try second.watch(jobId: job.jobId) { _ in true }
+        #expect(global.flatMap(errorOf)?.code == .busy, "fourth watch overall: \(String(describing: global))")
+        let third = try h.client()
+        let fresh = try third.watch(jobId: job.jobId) { _ in true }
+        #expect(fresh.flatMap(errorOf)?.code == .busy, "a new session is held to the global cap")
+
+        // While every watch slot is taken, ping and cancel_job still answer promptly.
+        for client in [first, second, third] {
+            let started = ContinuousClock.now
+            #expect(try response(client, .ping) == .pong)
+            #expect(ContinuousClock.now - started < .seconds(1))
+        }
+        let started = ContinuousClock.now
+        guard case .job = try response(third, .cancelJob(jobId: job.jobId)) else {
+            Issue.record("expected job")
+            return
+        }
+        #expect(ContinuousClock.now - started < .seconds(1))
+
+        // The watches end with the job and give their slots back.
+        #expect(waitUntil(.seconds(10)) { finished.load(ordering: .relaxed) == 3 })
+        #expect(waitUntil(.seconds(5)) { h.server.watchCount == 0 })
+        let again = try third.watch(jobId: job.jobId) { _ in true }
+        guard case let .job(final)?? = try? again.map({ try $0.get() }) else {
+            Issue.record("watch after the slots freed: \(String(describing: again))")
+            return
+        }
+        #expect(final.status == .cancelled)
+        _ = guardPid
+    }
+
+    @Test func watchWithoutWatchIdIsRefusedWithoutBlocking() throws {
+        let h = try Harness(.hang)
+        let c = try h.client()
+        let job = try startJob(c, scanSpec(h.env))
+        let guardPid = PidGuard(try h.env.waitForBrewPid())
+        let json = try #require(encodeJSON(Request.watchJob(jobId: job.jobId, sinceSeq: 0)))
+        let started = ContinuousClock.now
+        let outcome = try c.send(json: Data(json.utf8))
+        #expect(errorOf(outcome)?.code == .malformedRequest)
+        #expect(ContinuousClock.now - started < .seconds(1))
+        _ = try response(c, .cancelJob(jobId: job.jobId))
+        _ = guardPid
     }
 
     @Test func malformedAndOversizedRequestsGetTypedErrors() throws {

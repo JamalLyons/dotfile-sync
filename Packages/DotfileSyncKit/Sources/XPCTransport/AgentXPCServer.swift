@@ -1,8 +1,10 @@
 // XPC transport for ``AgentService``: replaces the Rust Unix-socket accept loop
 // (crates/dotfilesync-daemon/src/server.rs, listener.rs).
 //
-// Each request is answered on a worker thread so a long `watch_job` never blocks other
-// requests on the same session. `watch_job` streams notifications back to the client as
+// Each request is answered off the session queue so a long `watch_job` never blocks other
+// requests on the same session. Watches are admitted against a per-session and a global cap
+// before they start (beyond either, the reply is `busy`) and run on their own threads, never on
+// the shared worker queue, so open watches cannot starve `ping` or `cancel_job`. `watch_job` streams notifications back to the client as
 // synchronous XPC messages on the same session (one ack per notification), which preserves
 // ordering and back-pressure and lets the agent notice a vanished client: the send fails, the
 // watch stops, and the job keeps running (exactly `AgentService.watch` semantics).
@@ -57,6 +59,19 @@ public enum PeerRequirementPolicy: Sendable, Equatable, CustomStringConvertible 
     }
 }
 
+/// Transport-level bounds on concurrent `watch_job` streams.
+public struct WatchLimits: Sendable, Equatable {
+    /// Open watches across all sessions. The service's ``JobLimits/maxWatches`` still applies.
+    public var global: Int
+    /// Open watches on one peer session.
+    public var perSession: Int
+
+    public init(global: Int = 16, perSession: Int = 4) {
+        self.global = global
+        self.perSession = perSession
+    }
+}
+
 /// Why an ``AgentXPCServer`` could not start.
 public struct AgentXPCServerError: Error, Sendable, CustomStringConvertible {
     public var description: String
@@ -77,6 +92,9 @@ public final class AgentXPCServer: Sendable {
     /// The listener, set once during init and cleared by ``cancel()``.
     private let listener = Mutex<XPCListener?>(nil)
     private let activeSessions = Atomic<Int>(0)
+    /// Bounds on concurrent watches applied before a watch gets a thread.
+    public let watchLimits: WatchLimits
+    private let activeWatches = Atomic<Int>(0)
 
     /// Serves on the launchd Mach service `machService` (the agent's normal mode). Requires the
     /// process to have been launched by launchd with that name in its `MachServices`.
@@ -87,11 +105,13 @@ public final class AgentXPCServer: Sendable {
         service: AgentService,
         machService: String = AGENT_MACH_SERVICE,
         policy: PeerRequirementPolicy = .sameTeam(),
+        watchLimits: WatchLimits? = nil,
         log: Logger
     ) throws(AgentXPCServerError) {
         self.service = service
         self.policy = policy
         self.log = log
+        self.watchLimits = watchLimits ?? WatchLimits(global: service.config.jobs.maxWatches)
         requirement = try policy.requirement()
         let handler = makeSessionHandler()
         do {
@@ -112,10 +132,16 @@ public final class AgentXPCServer: Sendable {
     ///
     /// For in-process tests and for handing an endpoint over an existing XPC channel. Tests may
     /// pass ``PeerRequirementPolicy/insecureAnySigner`` because the test runner is ad-hoc signed.
-    public init(anonymousFor service: AgentService, policy: PeerRequirementPolicy, log: Logger) throws(AgentXPCServerError) {
+    public init(
+        anonymousFor service: AgentService,
+        policy: PeerRequirementPolicy,
+        watchLimits: WatchLimits? = nil,
+        log: Logger
+    ) throws(AgentXPCServerError) {
         self.service = service
         self.policy = policy
         self.log = log
+        self.watchLimits = watchLimits ?? WatchLimits(global: service.config.jobs.maxWatches)
         requirement = try policy.requirement()
         let created = XPCListener(targetQueue: nil, options: .none, incomingSessionHandler: makeSessionHandler())
         listener.withLock { $0 = created }
@@ -130,6 +156,11 @@ public final class AgentXPCServer: Sendable {
     /// Number of currently connected peer sessions.
     public var sessionCount: Int {
         activeSessions.load(ordering: .relaxed)
+    }
+
+    /// Number of `watch_job` streams currently running over XPC.
+    public var watchCount: Int {
+        activeWatches.load(ordering: .relaxed)
     }
 
     /// Stops accepting new sessions. Existing sessions end when their peers disconnect or the
@@ -153,7 +184,7 @@ public final class AgentXPCServer: Sendable {
                     session.setPeerRequirement(requirement)
                 }
                 self.activeSessions.add(1, ordering: .relaxed)
-                return SessionHandler(server: self, session: session)
+                return SessionHandler(server: self, session: session, watches: SessionWatches())
             }
         }
     }
@@ -166,7 +197,7 @@ public final class AgentXPCServer: Sendable {
         }
     }
 
-    fileprivate func handle(_ message: XPCDictionary, session: XPCSession) {
+    fileprivate func handle(_ message: XPCDictionary, session: XPCSession, watches: SessionWatches) {
         // Kernel-provided identity of the sender. Never taken from the message body.
         guard let uid = peerEuid(of: message) else {
             log.warn("xpc: message without a peer connection; refusing")
@@ -178,30 +209,62 @@ public final class AgentXPCServer: Sendable {
             reply(to: message, outcome: .err(ProtocolError(.malformedRequest, "missing '\(WireKey.request)' string")))
             return
         }
-        let watchId: UInt64? = message[WireKey.watchId]
+        let data = Data(body.utf8)
         let pending = PendingReply(message)
-        workers.async { [self] in
-            let data = Data(body.utf8)
-            if let watchId, data.count <= MAX_REQUEST_BYTES,
-               case let .watchJob(jobId, sinceSeq)? = try? Request.decode(json: data)
-            {
+        let watchId: UInt64? = message[WireKey.watchId]
+        if data.count <= MAX_REQUEST_BYTES, case let .watchJob(jobId, sinceSeq)? = try? Request.decode(json: data) {
+            // A watch streams over `watch_id`; without one it would block a shared worker.
+            guard let watchId else {
+                pending.reply(outcomeReply(.err(ProtocolError(.malformedRequest, "'watch_job' needs a '\(WireKey.watchId)'"))))
+                return
+            }
+            // Admit before a thread is spent, so refused watches cost nothing and admitted
+            // ones never occupy the shared worker queue.
+            if let refused = admitWatch(watches) {
+                pending.reply(outcomeReply(.err(refused)))
+                return
+            }
+            let thread = Thread { [self] in
+                defer { releaseWatch(watches) }
                 let outcome = service.watch(jobId: jobId, sinceSeq: sinceSeq, callerUid: uid) { notification in
                     self.push(notification, watchId: watchId, session: session)
                 }
-                var reply = XPCDictionary()
                 if let outcome {
-                    reply[WireKey.outcome] = encodeJSON(outcome) ?? internalErrorJSON
+                    pending.reply(outcomeReply(outcome))
                 } else {
+                    var reply = XPCDictionary()
                     reply[WireKey.watchStopped] = true
+                    pending.reply(reply)
                 }
-                pending.reply(reply)
-                return
             }
-            let outcome = service.handle(json: data, callerUid: uid)
-            var reply = XPCDictionary()
-            reply[WireKey.outcome] = encodeJSON(outcome) ?? internalErrorJSON
-            pending.reply(reply)
+            thread.name = "dotfilesync.xpc.watch"
+            thread.start()
+            return
         }
+        workers.async { [self] in
+            pending.reply(outcomeReply(service.handle(json: data, callerUid: uid)))
+        }
+    }
+
+    /// Takes a session and a global watch slot, or says why not.
+    private func admitWatch(_ watches: SessionWatches) -> ProtocolError? {
+        let perSession = watchLimits.perSession
+        if watches.count.wrappingAdd(1, ordering: .relaxed).oldValue >= perSession {
+            watches.count.subtract(1, ordering: .relaxed)
+            return ProtocolError(.busy, "too many jobs are being watched on this connection (limit \(perSession)); stop a watch and try again")
+        }
+        let global = watchLimits.global
+        if activeWatches.wrappingAdd(1, ordering: .relaxed).oldValue >= global {
+            activeWatches.subtract(1, ordering: .relaxed)
+            watches.count.subtract(1, ordering: .relaxed)
+            return ProtocolError(.busy, "too many jobs are being watched (limit \(global)); stop a watch and try again")
+        }
+        return nil
+    }
+
+    private func releaseWatch(_ watches: SessionWatches) {
+        activeWatches.subtract(1, ordering: .relaxed)
+        watches.count.subtract(1, ordering: .relaxed)
     }
 
     /// Sends one notification and waits for the client's ack. `false` stops the watch.
@@ -219,22 +282,32 @@ public final class AgentXPCServer: Sendable {
     }
 
     private func reply(to message: XPCDictionary, outcome: Outcome) {
+        message.reply(outcomeReply(outcome))
+    }
+
+    private func outcomeReply(_ outcome: Outcome) -> XPCDictionary {
         var reply = XPCDictionary()
         reply[WireKey.outcome] = encodeJSON(outcome) ?? internalErrorJSON
-        message.reply(reply)
+        return reply
     }
 }
 
 private let internalErrorJSON = #"{"err":{"code":"internal","message":"cannot encode outcome"}}"#
 
+/// Open watches on one peer session.
+private final class SessionWatches: Sendable {
+    let count = Atomic<Int>(0)
+}
+
 /// Per-session message handler.
 private struct SessionHandler: XPCPeerHandler {
     let server: AgentXPCServer
     let session: XPCSession
+    let watches: SessionWatches
 
     func handleIncomingRequest(_ message: XPCDictionary) -> XPCDictionary? {
-        server.handle(message, session: session)
-        // Replies are sent asynchronously from the worker thread.
+        server.handle(message, session: session, watches: watches)
+        // Replies are sent asynchronously from a worker or watch thread.
         return nil
     }
 
