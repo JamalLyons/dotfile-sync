@@ -74,6 +74,7 @@ Reported by `lstat` alone. Several are secret-like, cache or data locations: the
 - **External-edit conflicts.** `open` returns a version: mtime (ns), size and SHA-256. `save` must be given that version. If the file on disk differs, it fails with `conflict(current:)` carrying the current version. The file's identity is checked again just before the rename, so an edit that lands during the save is also a conflict. `force` accepts a stale version; every other check still applies.
 - **Create and rename.** `create` fails with `alreadyExists` if the path exists. `rename` moves a regular file within one root, needs an existing destination parent and an absent destination, and applies the size limit.
 - Writes in one process are serialized.
+- **Classification is the agent's job.** `ConfigEditor` itself does not classify paths. The agent's `config.*` ops refuse secret-like, cache, data and generated paths before calling it (see section 7).
 
 ## 4. Working tree and diff
 
@@ -161,25 +162,42 @@ Fish, TOML, JSON, YAML and shell are required by issue #11.
 
 ## 7. Agent operations
 
-Requests use the usual envelope ([daemon-architecture.md](daemon-architecture.md)). Parameter and result shapes: see `Sources/IPC/Messages.swift`.
+Requests use the usual envelope ([daemon-architecture.md](daemon-architecture.md)). Types are in `Sources/IPC/ConfigMessages.swift` and `Sources/IPC/Messages.swift`. `?` marks an optional param. Read ops default `home` to the agent owner's HOME, `repo_root` to the manifest's directory, and `profile` to automatic selection.
 
-| op | Purpose |
-|---|---|
-| `config.discover` | Run discovery and return the report. |
-| `config.tree` | Working tree with statuses and counts. |
-| `config.diff` | Diff of one file against its repo source. |
-| `config.open` | Read a file through the editor, with its version. |
-| `config.save` | Save text with backup, conflict check and atomic replace. |
-| `config.create` | Create a new file. |
-| `config.rename` | Rename a file within its root. |
-| `config.promote` | Plan enrolling files. Returns a normal plan. |
-| `config.demote` | Plan un-enrolling files. Returns a normal plan. |
+| op | Params | Response |
+|---|---|---|
+| `config.discover` | `home?` | `config_discovery` with `report` |
+| `config.tree` | `manifest`, `home?`, `repo_root?`, `profile?` | `config_tree` with `tree` |
+| `config.diff` | tree params plus `target` (absolute or HOME-relative) | `config_diff` with `diff` |
+| `config.open` | `path` | `config_document` with `path`, `mode`, `version`, `is_binary`, and `text` or `bytes_base64` |
+| `config.save` | `path`, `text`, `expected_version`, `force?` (default `false`) | `config_write` with `path`, `new_version`, `backup_path` |
+| `config.create` | `path`, `text` | `config_write` (no `backup_path`) |
+| `config.rename` | `from`, `to` | `config_write` (no `backup_path`) |
+| `config.promote`, `config.demote` | `manifest`, `home`, `repo_root?`, `profile?`, non-empty `targets` (absolute paths) | `job` of kind `plan`; `job_result` returns `plan` and `plan_id` |
 
-`config.promote` and `config.demote` do not change anything. They return a normal plan (see `Sources/IPC/Messages.swift` for the exact result). The client then follows the normal flow:
+A version is `{mtime_ns, size, sha256}`.
 
-1. `config.promote` / `config.demote` returns the plan. Show it to the user.
+Editor ops:
+
+- The agent always edits in its owner's HOME. The allowed roots are the registry config directories that exist there.
+- Before opening anything, every path is classified relative to HOME. Secret-like, cache, data and generated paths are refused with `invalid_params`, without being read.
+- Writes take the HOME lock exclusively, so they cannot race an apply.
+- Each write is logged with its backup path. Save backups go under `<data>/backups/editor`.
+- Requests are capped at 64 KiB, which also limits the size of a save.
+
+Error codes:
+
+- `conflict`: a stale save (`details.current_version` holds the version on disk) or an existing destination.
+- `not_found`: a missing file or parent.
+- `invalid_params`: unsafe or excluded paths and bad input.
+- `internal`: other I/O failures.
+- `approval_rejected` with `details.reason = state_changed`: the manifest-change state changed since the plan was approved.
+
+`config.promote` and `config.demote` change nothing themselves. They start a plan job, and the client follows the normal flow:
+
+1. `config.promote` / `config.demote`, then `job_result` returns the plan. Show it to the user.
 2. `plan.approve` with `plan_id` and the reviewed `digest`. The agent asks for Touch ID and returns a single-use token.
-3. `plan.apply` with `plan_id` and the token. The agent re-checks the fingerprint, then runs the actions as a job.
+3. `plan.apply` with `plan_id` and the token. The agent recomputes the manifest-change fingerprint (manifest, targets and repo sources) and fails closed on any change, then runs the actions as a job.
 4. `plan.resume` continues an interrupted run.
 
 ## 8. Not yet
