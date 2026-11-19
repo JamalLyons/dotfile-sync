@@ -71,7 +71,7 @@ Reported by `lstat` alone. Several are secret-like, cache or data locations: the
 - **Atomic saves.** `save` writes the new bytes to a hidden temp file (`.dotfilesync-editor-<uuid>.tmp`, created exclusively, fsynced) in the same directory, then renames it over the original.
 - **Backups.** Before a save replaces a file, the previous bytes are copied under the backup directory at `<backup>/<path relative to the allowed root>/<name>.backup.<YYYYmmdd_HHMMSS>` (UTC; `.<n>` is appended on a collision). Backup directories are created mode `0700`, backup files `0600`. If the replace fails, the backup is removed. `create` and `rename` make no backup.
 - **Permissions preserved.** A save sets the new file's mode to the old file's mode. `create` writes mode `0600` and creates missing parents (inside the root) with `0755`.
-- **External-edit conflicts.** `open` returns a version: mtime (ns), size and SHA-256. `save` must be given that version. If the file on disk differs, it fails with `conflict(current:)` carrying the current version. The file's identity is checked again just before the rename, so an edit that lands during the save is also a conflict. `force` accepts a stale version; every other check still applies.
+- **External-edit conflicts.** `open` returns a version: mtime (ns), size and SHA-256. `save` must be given that version. If the file on disk differs, it fails with `conflict(current:)` carrying the current version. The file's identity is checked again just before the rename, so an edit that lands before that check is also a conflict. A write by another process in the brief window between that check and the rename can still be overwritten; its prior content survives in the backup. `force` accepts a stale version; every other check still applies.
 - **Create and rename.** `create` fails with `alreadyExists` if the path exists. `rename` moves a regular file within one root, needs an existing destination parent and an absent destination, and applies the size limit.
 - Writes in one process are serialized.
 - **Classification is the agent's job.** `ConfigEditor` itself does not classify paths. The agent's `config.*` ops refuse secret-like, cache, data and generated paths before calling it (see section 7).
@@ -133,7 +133,7 @@ The plan fails if the source is already used by another entry, two targets map t
 **Apply steps (promote).**
 
 1. Reload the manifest. Another source for the same target means "re-plan".
-2. Copy the target into the repo (atomic write, target's mode). A differing existing repo source is first backed up.
+2. Re-check the repo destination (inside the repo root, no symlinked ancestors, matches the entry's source) and preflight the manifest text edit, then copy the target into the repo (atomic write through an exclusive random temp file, target's mode). A differing existing repo source is first backed up.
 3. Append the `[[files]]` entry to the manifest (below), after backing up the manifest.
 
 **Comment-preserving manifest edit.** `dotfilesync.toml` is edited as text, not rewritten. Promote inserts one `[[files]]` table (`source`, `target`) after the last existing base `[[files]]` table, or at the end when there is none. Demote removes that entry's table (plus one blank line before it), leaving comments and blank lines that introduce the next section. Header detection is line-based, so the edited text is re-parsed and must equal the expected manifest; any difference fails closed ("edit it by hand"). The write is atomic and keeps the manifest's mode.
@@ -162,7 +162,7 @@ Fish, TOML, JSON, YAML and shell are required by issue #11.
 
 ## 7. Agent operations
 
-Requests use the usual envelope ([daemon-architecture.md](daemon-architecture.md)). Types are in `Sources/IPC/ConfigMessages.swift` and `Sources/IPC/Messages.swift`. `?` marks an optional param. Read ops default `home` to the agent owner's HOME, `repo_root` to the manifest's directory, and `profile` to automatic selection.
+Requests use the usual envelope ([daemon-architecture.md](daemon-architecture.md)). Types are in `Sources/IPC/ConfigMessages.swift` and `Sources/IPC/Messages.swift`. `?` marks an optional param. `home` defaults to the agent owner's HOME, and any other value is rejected with `invalid_params` (classification is HOME-relative, so a different home would bypass the consent gate). Editor paths must be absolute under that HOME spelling. Read ops default `repo_root` to the manifest's directory, and `profile` to automatic selection.
 
 | op | Params | Response |
 |---|---|---|
