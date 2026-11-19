@@ -32,6 +32,8 @@ description = "optional"
 
 `mode` serializes in lowercase. `copy` writes file bytes. `symlink` points `target` at `source`.
 
+`[[files]]` tables can also be added or removed by promote and demote (`promote_file` / `demote_file`, see [config-editor.md](config-editor.md#5-promote-and-demote)). Those edit `dotfilesync.toml` as text: one base `[[files]]` table is inserted after the last one or removed, and comments and layout are kept. The result is re-parsed and must equal the expected manifest, otherwise the edit is refused. Profile `[[files]]` entries are never edited this way.
+
 `os` is kept only when it matches the host. The only implemented host OS is `macos`. Any other value parses and is then dropped at resolve time.
 
 File identity during a merge is the **raw manifest `target` string**, not the expanded path. `~/.config/fish/config.fish` and `/Users/me/.config/fish/config.fish` are different keys.
