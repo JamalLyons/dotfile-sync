@@ -170,6 +170,19 @@ public func planManifestChange(
             break
         }
     }
+    // Preflight the exact text edits apply will make, so a manifest layout the editor cannot
+    // rewrite fails at plan time rather than after a repository file was written.
+    if let text = String(validating: manifestBytes, as: UTF8.self) {
+        var edited = text
+        for action in actions {
+            guard case let .promoteFile(_, _, _, entrySource, entryTarget, _) = action else { continue }
+            do {
+                edited = try appendingTrackedFile(TrackedFile(source: entrySource, target: entryTarget), to: edited)
+            } catch {
+                throw .failed("cannot add '\(entryTarget)' to the manifest automatically: \(error); edit it by hand")
+            }
+        }
+    }
     let problems = validateManifest(updated)
     if !problems.isEmpty {
         throw .failed(
@@ -288,8 +301,16 @@ private func planPromotions(_ targets: [FilePath], _ ctx: ChangeContext) throws(
                 if ctx.managedTargets.contains(where: { rustPathEqual($0, target) }) {
                     throw .failed("'\(target.string)' is already managed by the manifest")
                 }
+                if isManifestProtected(target, ctx) {
+                    throw .failed(
+                        "refusing to promote '\(target.string)': it is excluded, a machine override, or local.fish"
+                    )
+                }
                 files.append(target)
             case S_IFDIR:
+                if isManifestProtected(target, ctx) {
+                    throw .failed("refusing to promote '\(target.string)': it is excluded by the manifest")
+                }
                 let expanded = try expandDirectory(target, ctx)
                 if expanded.isEmpty {
                     throw .failed("'\(target.string)' has no eligible unmanaged config files to promote")
@@ -421,9 +442,26 @@ private func isManifestProtected(_ target: FilePath, _ ctx: ChangeContext) -> Bo
     return false
 }
 
-/// Every existing ancestor of `source` below `repoRoot` must be a real directory, and an
-/// existing `source` must be a regular file (it is backed up, never followed).
 private func checkRepoDestination(_ source: FilePath, _ repoRoot: FilePath) throws(OpError) {
+    do {
+        try checkRepoSource(source, repoRoot: repoRoot)
+    } catch {
+        throw .failed(error.message)
+    }
+}
+
+/// `source` must sit strictly inside `repoRoot` with no `.`/`..`; every existing ancestor below
+/// `repoRoot` must be a real directory (never a symlink), and an existing `source` must be a
+/// regular file (it is backed up, never followed). Run at plan time and again right before apply
+/// writes, so a crafted plan or a symlink swapped in after approval cannot redirect the copy.
+func checkRepoSource(_ source: FilePath, repoRoot: FilePath) throws(ApplyIOError) {
+    let components = rustComponents(source)
+    if components.contains(.parentDir) || pathBytes(source).split(separator: UInt8(ascii: "/")).contains([UInt8(ascii: ".")]) {
+        throw ApplyIOError("repository path '\(source.string)' must not contain '.' or '..'")
+    }
+    guard components.count > rustComponents(repoRoot).count, rustPathStartsWith(source, repoRoot) else {
+        throw ApplyIOError("repository path '\(source.string)' is not inside '\(repoRoot.string)'")
+    }
     let rootCount = rustComponents(repoRoot).count
     var current = source
     var ancestors: [FilePath] = []
@@ -434,11 +472,11 @@ private func checkRepoDestination(_ source: FilePath, _ repoRoot: FilePath) thro
     for ancestor in ancestors {
         guard case let .success(st) = lstatPath(ancestor) else { continue }
         if (st.st_mode & S_IFMT) != S_IFDIR {
-            throw .failed("repository path '\(ancestor.string)' exists and is not a directory")
+            throw ApplyIOError("repository path '\(ancestor.string)' exists and is not a directory")
         }
     }
     if case let .success(st) = lstatPath(source), (st.st_mode & S_IFMT) != S_IFREG {
-        throw .failed("repository path '\(source.string)' exists and is not a regular file")
+        throw ApplyIOError("repository path '\(source.string)' exists and is not a regular file")
     }
 }
 

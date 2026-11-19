@@ -43,6 +43,28 @@ func applyPromote(
         )
     }
 
+    // A stored plan is data: re-derive the repository path from the entry and re-check it, so
+    // neither a crafted `source` nor a symlinked repository directory can redirect the copy.
+    let entrySourcePath = decodeManifestPathBytes(entrySource)
+    guard rustPathEqual(source, plan.repoRoot.pushing(entrySourcePath)) else {
+        throw ApplyIOError("repository path '\(source.string)' does not match entry source '\(entrySource)'")
+    }
+    try checkRepoSource(source, repoRoot: plan.repoRoot)
+
+    // Preflight the manifest edit before anything is written.
+    let edited: String?
+    if existing == nil {
+        do {
+            edited = try appendingTrackedFile(
+                TrackedFile(source: entrySource, target: entryTarget), to: manifestContent
+            )
+        } catch {
+            throw ApplyIOError("cannot add '\(entryTarget)' to the manifest: \(error)")
+        }
+    } else {
+        edited = nil
+    }
+
     // Classified before it is read; fails closed when the target changed after planning.
     try checkPromotable(home: plan.home, target: target)
     let bytes = try readPromoteTarget(target)
@@ -76,16 +98,8 @@ func applyPromote(
         try writeAtomic(source, bytes: bytes, mode: fileMode(target) ?? 0o644)
     }
 
-    if existing != nil {
+    guard let edited else {
         return ManifestChangeOutcome(status: .done, backupPath: sourceBackup)
-    }
-    let edited: String
-    do {
-        edited = try appendingTrackedFile(
-            TrackedFile(source: entrySource, target: entryTarget), to: manifestContent
-        )
-    } catch {
-        throw ApplyIOError("cannot add '\(entryTarget)' to the manifest: \(error)")
     }
     let manifestBackup = try rewriteManifest(
         manifest, old: manifestContent, new: edited, plan: plan, ctx: ctx, runId: runId, actionId: actionId

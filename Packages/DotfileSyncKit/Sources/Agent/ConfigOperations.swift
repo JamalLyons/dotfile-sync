@@ -18,6 +18,7 @@ struct ConfigOperations: Sendable {
     func discover(home: FilePath?) throws(ProtocolError) -> ConfigDiscoveryReport {
         let home = home ?? config.home
         try validatePath("home", home)
+        try requireOwnerHome(home)
         let guardLock = try lock([(.homeDirectory(home), .shared)])
         defer { guardLock.release() }
         return discoverConfigs(home: home, environment: environment)
@@ -54,6 +55,7 @@ struct ConfigOperations: Sendable {
     ) throws(ProtocolError) -> T {
         let input = PlanInput(manifest: manifest, home: home ?? config.home, repoRoot: repoRoot, profile: profile)
         try validatePlanInput(input)
+        try requireOwnerHome(input.home)
         let guardLock = try lock([(.homeDirectory(input.home), .shared), (.manifestPath(manifest), .shared)])
         defer { guardLock.release() }
         let resolved: ResolvedManifest
@@ -111,7 +113,13 @@ struct ConfigOperations: Sendable {
                 throw ProtocolError(.invalidParams, "path contains parent traversal or a NUL byte")
             }
             var relative = FilePath(raw).lexicallyNormalized()
-            guard relative.removePrefix(config.home.lexicallyNormalized()) else { continue }
+            // Only the owner's HOME spelling is accepted, so classification always sees the
+            // HOME-relative path the editor resolves (no canonical-alias bypass).
+            guard FilePath(raw).isAbsolute, relative.removePrefix(config.home.lexicallyNormalized()),
+                  !relative.isEmpty
+            else {
+                throw ProtocolError(.invalidParams, "'\(raw)' must be an absolute path under '\(config.home.string)'")
+            }
             let classification = classifyConfigPath(relative)
             if classification.class.isExcludedByDefault {
                 throw ProtocolError(
@@ -119,6 +127,14 @@ struct ConfigOperations: Sendable {
                     "'\(raw)' is \(classification.class.rawValue) and excluded from editing: \(classification.reason ?? "excluded")"
                 )
             }
+        }
+    }
+
+    /// Classification is relative to HOME, so a caller-chosen home would let it re-anchor and
+    /// bypass the consent gate. config.* reads and changes always use the owner's HOME.
+    private func requireOwnerHome(_ home: FilePath) throws(ProtocolError) {
+        guard home.lexicallyNormalized() == config.home.lexicallyNormalized() else {
+            throw ProtocolError(.invalidParams, "'home' must be the owner's HOME '\(config.home.string)'")
         }
     }
 

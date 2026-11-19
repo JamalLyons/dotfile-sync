@@ -115,10 +115,12 @@ private struct ConfigFixture {
         try FileManager.default.createDirectory(atPath: directory.string, withIntermediateDirectories: true)
         let outsideFile = directory.appending("config.fish")
         try "outside\n".write(toFile: outsideFile.string, atomically: true, encoding: .utf8)
-        guard case .configDiscovery = try agent.call(.configDiscover(home: outside)) else {
-            Issue.record("expected a discovery report for the alternate HOME")
-            return
-        }
+        // config.* is pinned to the owner's HOME so classification cannot be re-anchored.
+        #expect(errorCode { try agent.call(.configDiscover(home: outside)) }?.code == .invalidParams)
+        var otherHome = fixture.input
+        otherHome.home = outside
+        #expect(errorCode { try agent.call(.configTree(manifest: otherHome.manifest, home: outside, repoRoot: nil, profile: nil)) }?.code == .invalidParams)
+        #expect(errorCode { try agent.call(.configPromote(input: otherHome, targets: [outsideFile])) }?.code == .invalidParams)
         #expect(errorCode { try agent.call(.configOpen(path: outsideFile.string)) }?.code == .invalidParams)
         #expect(errorCode { try agent.call(.configOpen(path: fixture.target.string + "\0suffix")) }?.code == .invalidParams)
         let symlink = fixture.env.home.appending(".config/nvim")
@@ -151,6 +153,14 @@ private struct ConfigFixture {
         let rename = Request.configRename(from: fixture.target.string, to: fish.appending("my_secret.fish").string)
         #expect(errorCode { try agent.call(rename) }?.code == .invalidParams)
         #expect(readText(fixture.target) == "local\n")
+
+        // A canonical or otherwise non-HOME spelling of the same file must not skip classification.
+        let canonicalHome = try canonicalize(fixture.env.home)
+        if canonicalHome != fixture.env.home {
+            let alias = canonicalHome.appending(".config/fish/secrets.fish")
+            #expect(errorCode { try agent.call(.configOpen(path: alias.string)) }?.code == .invalidParams)
+        }
+        #expect(errorCode { try agent.call(.configOpen(path: "relative/config.fish")) }?.code == .invalidParams)
     }
 
     @Test func editorCreatesAndRenamesWithoutReplacingExistingContents() throws {

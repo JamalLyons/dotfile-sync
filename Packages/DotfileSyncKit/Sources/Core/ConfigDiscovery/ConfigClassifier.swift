@@ -92,7 +92,7 @@ private func secretReason(_ name: String, _ names: [String], _ index: Int) -> St
 
 private let dataExtensions: Set<String> = [
     "log", "sqlite", "sqlite3", "db", "db-wal", "db-shm", "db-journal", "sqlite-wal",
-    "sqlite-shm", "sqlite-journal",
+    "sqlite-shm", "sqlite-journal", "sqlite3-wal", "sqlite3-shm", "sqlite3-journal",
 ]
 
 private func dataReason(_ name: String, _ names: [String], _ index: Int) -> String? {
@@ -127,7 +127,7 @@ private func cacheReason(_ name: String, _ names: [String], _ index: Int) -> Str
 }
 
 private let generatedNames: Set<String> = [
-    "__pycache__", "node_modules", "lazy-lock.json", "packer_compiled.lua",
+    "__pycache__", "node_modules", "lazy-lock.json", "packer_compiled.lua", ".build",
 ]
 private let generatedExtensions: Set<String> = ["zwc", "pyc", "lock", "swp", "swo"]
 

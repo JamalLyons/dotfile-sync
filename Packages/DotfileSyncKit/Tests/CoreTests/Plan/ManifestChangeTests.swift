@@ -213,6 +213,54 @@ struct ManifestChangeTests {
         #expect(!FileManager.default.fileExists(atPath: f.repoPath.appending("fish/config.fish").string))
     }
 
+    @Test func explicitTargetsHonorManifestExclusionsAndLocalFish() throws {
+        let f = try Self.fixture()
+        try f.write(home: ".config/fish/local.fish", "set -x SECRETISH 1\n")
+        try f.write(home: ".config/app/settings.backup.1", "x\n")
+        let local = Self.failure { try planManifestChange(f.input(.promote(targets: [f.homeFile(".config/fish/local.fish")])), hostname: "h") }
+        #expect(local?.contains("refusing to promote") == true)
+        let excluded = Self.failure { try planManifestChange(f.input(.promote(targets: [f.homeFile(".config/app/settings.backup.1")])), hostname: "h") }
+        #expect(excluded?.contains("refusing to promote") == true)
+    }
+
+    @Test func promoteRefusesSymlinkedRepoDirectorySwappedInAfterPlan() throws {
+        let f = try Self.fixture()
+        try f.write(home: ".config/fish/config.fish", "v1\n")
+        let target = f.homeFile(".config/fish/config.fish")
+        let plan = try planManifestChange(f.input(.promote(targets: [target])), hostname: "host")
+        let outside = f.tmp.url.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: f.repo.appendingPathComponent("fish"), withDestinationURL: outside)
+
+        #expect(throws: ApplyError.self) { try applyPlan(plan, context: f.context("swap")) }
+        #expect(!FileManager.default.fileExists(atPath: outside.appendingPathComponent("config.fish").path))
+        #expect(try f.manifestText() == Self.manifestBody)
+    }
+
+    @Test func craftedPlanSourceOutsideRepoIsRefusedAtApply() throws {
+        let f = try Self.fixture()
+        try f.write(home: ".config/fish/config.fish", "v1\n")
+        let target = f.homeFile(".config/fish/config.fish")
+        var plan = try planManifestChange(f.input(.promote(targets: [target])), hostname: "host")
+        guard case let .promoteFile(t, _, m, es, et, sha) = plan.actions[0].kind else { return }
+        let escape = FilePath(f.tmp.url.appendingPathComponent("escape.txt").path)
+        plan.actions[0].kind = .promoteFile(target: t, source: escape, manifest: m, entrySource: es, entryTarget: et, targetSha256: sha)
+        #expect(throws: ApplyError.self) { try applyPlan(plan, context: f.context("crafted")) }
+        #expect(!FileManager.default.fileExists(atPath: escape.string))
+    }
+
+    @Test func writeAtomicNeverFollowsAPlantedTempSymlink() throws {
+        let f = try Self.fixture()
+        let victim = f.tmp.url.appendingPathComponent("victim")
+        try "keep\n".write(to: victim, atomically: false, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: f.repo.appendingPathComponent("out.tmp"), withDestinationURL: victim)
+        try writeAtomic(f.repoPath.appending("out"), bytes: Array("new\n".utf8), mode: 0o644)
+        #expect(try String(contentsOf: victim, encoding: .utf8) == "keep\n")
+        #expect(try String(contentsOfFile: f.repoPath.appending("out").string, encoding: .utf8) == "new\n")
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: f.repo.path).filter { $0.contains("dotfilesync-") }
+        #expect(leftovers.isEmpty)
+    }
+
     @Test func manifestChangedAfterPlanChangesFingerprint() throws {
         let f = try Self.fixture()
         try f.write(home: ".gitconfig", "[user]\n")

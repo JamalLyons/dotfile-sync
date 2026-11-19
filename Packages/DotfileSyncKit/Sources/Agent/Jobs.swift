@@ -269,6 +269,10 @@ public final class JobManager: Sendable {
 
     func startManifestChange(_ input: PlanInput, change: ManifestChange, ownerUid: UInt32) throws(ProtocolError) -> JobSnapshot {
         try validatePlanInput(input)
+        // Classification is HOME-relative; a caller-chosen home would re-anchor the consent gate.
+        guard input.home.lexicallyNormalized() == ownerHome.lexicallyNormalized() else {
+            throw invalid("'home' must be the owner's HOME '\(ownerHome.string)'")
+        }
         switch change {
         case let .promote(targets), let .demote(targets):
             guard !targets.isEmpty else { throw invalid("'targets' must contain at least one path") }
