@@ -1,15 +1,22 @@
 # dotfile-sync
 
-Set up a Mac for coding from one repo: Homebrew apps and tools, Fish shell, and editor settings.
+A native macOS app for managing your development environment.
 
-This repo gives you two ways to do it:
+**dotfilesync** (`DotfileSync.app`, plus a bundled CLI) keeps your Mac's development setup in
+one place: the apps and tools you install, your config files, and soon your language
+toolchains. It shows what will change before anything happens, asks for Touch ID, and backs
+up every file it replaces.
 
-| | What it is | Use it when |
-|---|---|---|
-| **dotfilesync** | A Mac app and command-line tool | You want to see what will change before anything happens, with backups. |
-| **`setup.sh`** | A shell script | You are on a brand-new Mac, or you want Node, Xcode or Homebrew itself installed. |
+| Area | Status |
+|---|---|
+| Homebrew apps and tools from a manifest | Available |
+| Config discovery and a safe in-app editor | Available |
+| Toolchains: Java, Rust, Go, Python, C/C++ | Planned ([#5](https://github.com/JamalLyons/dotfile-sync/issues/5)) |
+| Sync configs through a private GitHub repo | Planned ([#6](https://github.com/JamalLyons/dotfile-sync/issues/6), [#7](https://github.com/JamalLyons/dotfile-sync/issues/7)) |
 
-## dotfilesync
+Roadmap: [epic #3](https://github.com/JamalLyons/dotfile-sync/issues/3).
+
+## How it works
 
 dotfilesync compares your Mac with the list in [`dotfilesync.toml`](dotfilesync.toml) and fixes
 the differences, but only after you say yes.
@@ -43,7 +50,10 @@ dotfilesync apply                                 # make the changes
 
 Prefer clicking? Open **DotfileSync** from Applications. It does the same thing.
 
-## setup.sh
+## Bootstrapping a brand-new Mac (`setup.sh`)
+
+`setup.sh` is the older shell bootstrap. Use it on a brand-new Mac, before dotfilesync can be
+built, or for things dotfilesync doesn't manage yet (Homebrew itself, Node, Xcode).
 
 ```sh
 bash ./setup.sh             # install everything
