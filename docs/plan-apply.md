@@ -52,7 +52,11 @@ Risk and reversibility are set by the planner. `backup` is true when a copy or l
 | Copy or link, target exists and differs | medium | yes | Backs up first, then replaces. Undo is restoring the backup. |
 | Ensure local override (missing only) | low | yes | Creates the file when it is absent. Does not rewrite an existing one. |
 | Install Fisher, then `fisher update` | medium | no | Emitted only when `setup.fisher` is true **and** `~/.config/fish/functions/fisher.fish` is absent. Both actions are emitted together. Fixed `fish -c` scripts, not caller-supplied shell. |
+| Promote file (`promote_file`) | medium | yes | Copies a machine file into the repo, then appends a base `[[files]]` entry to the manifest. Backs up the manifest and any replaced repo source. Never touches the machine file. |
+| Demote file (`demote_file`) | medium | yes | Removes one base `[[files]]` entry from the manifest, after backing it up. Never touches the machine file or the repo source. |
 | Set login shell | high | yes | `chsh -s <brew prefix>/bin/<login_shell>`. The previous shell is stored on the step. Undo is `chsh` back to that path. `sudo` only with `--allow-sudo`, and only to append a shell that is not already in `/etc/shells`. |
+
+Promote and demote plans come from `config.promote` / `config.demote`, not `plan`. They are approved and applied like any other plan, and are idempotent on resume. Their fingerprint covers the manifest, each promote target's contents and each repo source, so a change after approval is rejected. Details: [config-editor.md](config-editor.md#5-promote-and-demote).
 
 ## setup.sh parity
 

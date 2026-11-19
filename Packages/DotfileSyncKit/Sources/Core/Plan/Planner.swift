@@ -143,7 +143,7 @@ public func runPlan(
 }
 
 /// `format!("a-{:03}", n)`.
-private func formatActionId(_ n: Int) -> String {
+func formatActionId(_ n: Int) -> String {
     let digits = String(n)
     return "a-" + String(repeating: "0", count: max(0, 3 - digits.count)) + digits
 }

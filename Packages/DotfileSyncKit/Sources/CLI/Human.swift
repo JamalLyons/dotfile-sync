@@ -260,6 +260,8 @@ func actionTag(_ kind: ActionKind) -> String {
     case .ensureLocalOverride: return "ensure"
     case .installFisher, .fisherUpdate: return "fisher"
     case .setLoginShell: return "shell"
+    case .promoteFile: return "promote"
+    case .demoteFile: return "demote"
     }
 }
 

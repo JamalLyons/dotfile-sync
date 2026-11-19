@@ -86,6 +86,22 @@ private func errorOf(_ outcome: Outcome) -> ProtocolError? {
         #expect(info.dataDir == h.env.layout.root)
     }
 
+    @Test func configTreeRoundTripsOverXPC() throws {
+        let h = try Harness(.fast)
+        let manifest = h.env.tmp.appending("dotfilesync.toml")
+        let fish = h.env.home.appending(".config/fish")
+        try FileManager.default.createDirectory(atPath: fish.string, withIntermediateDirectories: true)
+        try "set -g fish_greeting\n".write(toFile: fish.appending("config.fish").string, atomically: true, encoding: .utf8)
+        try "schema_version = 1\n".write(toFile: manifest.string, atomically: true, encoding: .utf8)
+
+        guard case let .configTree(tree) = try response(h.client(), .configTree(manifest: manifest, home: h.env.home)) else {
+            Issue.record("expected a config tree")
+            return
+        }
+        #expect(tree.root.aggregate?.unmanaged == 1)
+        #expect(!tree.truncated)
+    }
+
     @Test func scanJobWatchedToCompletionOverXPC() throws {
         let h = try Harness(.slow(0.4))
         let c = try h.client()

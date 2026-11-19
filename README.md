@@ -62,6 +62,7 @@ and the Zed settings. Flags, custom Fish commands and details: [setup.sh guide](
 | [setup.sh guide](docs/setup-sh.md) | Script flags, Fish commands, fonts, Node, Zed |
 | [Building and developing](docs/development.md) | Building the app, running tests, code layout |
 | [Plan and apply](docs/plan-apply.md) | How approvals, backups and resuming work |
+| [Config editor](docs/config-editor.md) | Config discovery, safe in-app editing, working-tree status and diff, promote/demote, highlighting coverage |
 | [Architecture](docs/daemon-architecture.md) | How the app, helper and CLI fit together; security |
 
 ## License

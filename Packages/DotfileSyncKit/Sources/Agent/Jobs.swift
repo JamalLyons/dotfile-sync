@@ -164,8 +164,9 @@ private struct Registry {
 private enum Work: Sendable {
     case spec(JobSpec)
     case plan(input: PlanInput, ownerUid: UInt32)
+    case manifestChange(input: ManifestChangeInput, ownerUid: UInt32)
     /// `resumeDir` set resumes the journal in that directory instead of starting a run.
-    case apply(plan: Plan, input: PlanInput, allowSudo: Bool, resumeDir: FilePath?)
+    case apply(stored: StoredPlan, allowSudo: Bool, resumeDir: FilePath?)
 }
 
 /// Paths and owner the job manager needs.
@@ -173,11 +174,13 @@ public struct JobPaths: Sendable {
     public var runsDir: FilePath
     public var backupsDir: FilePath
     public var ownerUid: UInt32
+    public var home: FilePath
 
-    public init(runsDir: FilePath, backupsDir: FilePath, ownerUid: UInt32) {
+    public init(runsDir: FilePath, backupsDir: FilePath, ownerUid: UInt32, home: FilePath = FilePath(NSHomeDirectory())) {
         self.runsDir = runsDir
         self.backupsDir = backupsDir
         self.ownerUid = ownerUid
+        self.home = home
     }
 }
 
@@ -195,6 +198,7 @@ public final class JobManager: Sendable {
     private let runs: RunIndex
     private let runsDir: FilePath
     private let backupsDir: FilePath
+    private let ownerHome: FilePath
     private let presence: any UserPresenceVerifier
     /// True while a presence prompt is open.
     private let presencePrompt = Atomic<Bool>(false)
@@ -227,6 +231,7 @@ public final class JobManager: Sendable {
         runs = RunIndex.recover(runsDir: paths.runsDir, log: log, plans: plans, ownerUid: paths.ownerUid)
         runsDir = paths.runsDir
         backupsDir = paths.backupsDir
+        ownerHome = paths.home
         self.presence = presence
     }
 
@@ -262,6 +267,23 @@ public final class JobManager: Sendable {
         return try spawn(.plan, .plan(input: input, ownerUid: ownerUid))
     }
 
+    func startManifestChange(_ input: PlanInput, change: ManifestChange, ownerUid: UInt32) throws(ProtocolError) -> JobSnapshot {
+        try validatePlanInput(input)
+        // Classification is HOME-relative; a caller-chosen home would re-anchor the consent gate.
+        guard input.home.lexicallyNormalized() == ownerHome.lexicallyNormalized() else {
+            throw invalid("'home' must be the owner's HOME '\(ownerHome.string)'")
+        }
+        switch change {
+        case let .promote(targets), let .demote(targets):
+            guard !targets.isEmpty else { throw invalid("'targets' must contain at least one path") }
+            for target in targets { try validatePath("targets", target) }
+        }
+        let changeInput = ManifestChangeInput(
+            manifest: input.manifest, home: input.home, repoRoot: input.repoRoot, profile: input.profile, change: change
+        )
+        return try spawn(.plan, .manifestChange(input: changeInput, ownerUid: ownerUid))
+    }
+
     /// Issues a single-use approval for `planId` if `digest` is its current digest and the
     /// owner confirms their presence. At most one presence prompt is open at a time.
     public func approve(planId: String, digest: String, approverUid: UInt32) throws(ProtocolError) -> ApprovalGrant {
@@ -271,6 +293,12 @@ public final class JobManager: Sendable {
         }
         if digest != stored.plan.digest {
             throw approvalRejected(.planMismatch)
+        }
+        // A resumable run may already have changed the manifest. Fresh apply still checks
+        // the original fingerprint at redemption and again under exclusive locks.
+        if case .manifestChange = stored.origin, !runs.canResume(stored.plan),
+           observeManifestChange(stored.plan) != stored.plan.stateFingerprint {
+            throw approvalRejected(.stateChanged)
         }
         try confirmPresence(stored)
         let binding = approvalBinding(stored)
@@ -293,7 +321,7 @@ public final class JobManager: Sendable {
         }
         defer { presencePrompt.store(false, ordering: .releasing) }
         let count = stored.plan.actions.count
-        let reason = "apply \(count) dotfilesync change\(count == 1 ? "" : "s") to \(stored.input.home.string)"
+        let reason = "apply \(count) dotfilesync change\(count == 1 ? "" : "s") to \(stored.plan.home.string)"
         switch presence.confirmUserPresence(reason: reason) {
         case .confirmed:
             return
@@ -311,7 +339,11 @@ public final class JobManager: Sendable {
             throw planNotFound(planId)
         }
         // Re-observe before redeeming. The worker checks again after it holds the locks.
-        let current = try observeFingerprint(stored.input)
+        let current: String?
+        switch stored.origin {
+        case let .desiredState(input): current = try observeDesiredState(input)
+        case .manifestChange: current = observeManifestChange(stored.plan)
+        }
         do {
             try approvals.redeem(
                 .fromClient(token), plan: approvalBinding(stored), callerUid: callerUid,
@@ -321,7 +353,7 @@ public final class JobManager: Sendable {
             throw approvalRejected(error)
         }
         log.info("plan \(planId) approval redeemed for apply")
-        return try spawn(.apply, .apply(plan: stored.plan, input: stored.input, allowSudo: allowSudo, resumeDir: nil))
+        return try spawn(.apply, .apply(stored: stored, allowSudo: allowSudo, resumeDir: nil))
     }
 
     /// Redeems `token` and resumes the interrupted, failed or cancelled run `runId`.
@@ -359,7 +391,7 @@ public final class JobManager: Sendable {
             throw ProtocolError(.planNotFound, "no run with id '\(runId)'")
         }
         log.info("run \(runId) approval redeemed for resume")
-        return try spawn(.apply, .apply(plan: stored.plan, input: stored.input, allowSudo: allowSudo, resumeDir: dir))
+        return try spawn(.apply, .apply(stored: stored, allowSudo: allowSudo, resumeDir: dir))
     }
 
     /// Known runs.
@@ -439,8 +471,10 @@ public final class JobManager: Sendable {
             runSpec(job, spec)
         case let .plan(input, ownerUid):
             runPlanJob(job, input, ownerUid)
-        case let .apply(plan, input, allowSudo, resumeDir):
-            runApplyJob(job, plan, input, allowSudo, resumeDir)
+        case let .manifestChange(input, ownerUid):
+            runManifestChangeJob(job, input, ownerUid)
+        case let .apply(stored, allowSudo, resumeDir):
+            runApplyJob(job, stored, allowSudo, resumeDir)
         }
     }
 
@@ -480,7 +514,7 @@ public final class JobManager: Sendable {
     }
 
     private func runPlanJob(_ job: Job, _ input: PlanInput, _ ownerUid: UInt32) {
-        guard let lockGuard = acquire(job, [(.homebrew, .shared), (.manifest(input.manifest), .shared)]) else { return }
+        guard let lockGuard = acquire(job, [(.homebrew, .shared), (.manifestPath(input.manifest), .shared)]) else { return }
         let runner = makeRunner(cancel: job.cancel)
         let result: Result<JobOutput, OpError>
         do {
@@ -489,7 +523,7 @@ public final class JobManager: Sendable {
                 progress: { stage in job.pushEvent(stage.rawValue, stage.describe) },
                 isCancelled: { job.cancel.isCancelled }
             )
-            plans.insert(StoredPlan(plan: plan, input: input, ownerUid: ownerUid))
+            plans.insert(StoredPlan(plan: plan, origin: .desiredState(input), ownerUid: ownerUid))
             result = .success(.plan(plan: plan, planId: plan.planId))
         } catch {
             result = .failure(error)
@@ -498,12 +532,51 @@ public final class JobManager: Sendable {
         finishOp(job, result)
     }
 
-    private func runApplyJob(_ job: Job, _ plan: Plan, _ input: PlanInput, _ allowSudo: Bool, _ resumeDir: FilePath?) {
-        guard let lockGuard = acquire(job, [(.homebrew, .exclusive), (.home(plan.home), .exclusive)]) else { return }
+    private func runManifestChangeJob(_ job: Job, _ input: ManifestChangeInput, _ ownerUid: UInt32) {
+        guard let lockGuard = acquire(job, manifestChangeReadLocks(home: input.home, manifest: input.manifest)) else { return }
+        let result: Result<JobOutput, OpError>
+        if job.cancel.isCancelled {
+            result = .failure(.cancelled)
+        } else {
+            job.pushEvent("planning", "Planning manifest changes")
+            do {
+                let plan = try planManifestChange(input)
+                plans.insert(StoredPlan(plan: plan, origin: .manifestChange, ownerUid: ownerUid))
+                result = .success(.plan(plan: plan, planId: plan.planId))
+            } catch {
+                result = .failure(error)
+            }
+        }
+        lockGuard.release()
+        finishOp(job, result)
+    }
+
+    private func runApplyJob(_ job: Job, _ stored: StoredPlan, _ allowSudo: Bool, _ resumeDir: FilePath?) {
+        let plan = stored.plan
+        let manifestMode: LockMode
+        let profile: String?
+        switch stored.origin {
+        case let .desiredState(input):
+            manifestMode = .shared
+            profile = input.profile
+        case .manifestChange:
+            manifestMode = .exclusive
+            profile = plan.profile
+        }
+        // Apply may also write absolute targets or repository files within the owner's config roots.
+        let requests: [(ResourceKey, LockMode)] = [
+            (.homebrew, .exclusive), (.manifestPath(plan.manifestPath), manifestMode),
+            (.homeDirectory(plan.home), .exclusive), (.homeDirectory(ownerHome), .exclusive),
+        ]
+        guard let lockGuard = acquire(job, requests) else { return }
 
         if resumeDir == nil {
             do {
-                let current = try observeFingerprint(input)
+                let current: String?
+                switch stored.origin {
+                case let .desiredState(input): current = try observeDesiredState(input)
+                case .manifestChange: current = try? manifestChangeFingerprint(plan)
+                }
                 if current != plan.stateFingerprint {
                     lockGuard.release()
                     complete(job, .failed, error: JobError(
@@ -534,7 +607,7 @@ public final class JobManager: Sendable {
                 complete(job, .failed, error: JobError(code: .internal, message: error.description))
                 return
             }
-            runs.begin(jobId: job.id, dir: dir, plan: plan, input: input)
+            runs.begin(jobId: job.id, dir: dir, plan: plan, profile: profile)
             runDir = dir
         }
 
@@ -617,12 +690,24 @@ public final class JobManager: Sendable {
         return runner
     }
 
-    private func observeFingerprint(_ input: PlanInput) throws(ProtocolError) -> String {
+    private func observeDesiredState(_ input: PlanInput) throws(ProtocolError) -> String {
         do {
             return try runPlan(input, runner: makeRunner(cancel: nil), hostname: currentHostname()).stateFingerprint
         } catch {
             throw opToProtocol(error)
         }
+    }
+
+    private func manifestChangeReadLocks(home: FilePath, manifest: FilePath) -> [(ResourceKey, LockMode)] {
+        [(.homeDirectory(home), .shared), (.homeDirectory(ownerHome), .shared), (.manifestPath(manifest), .shared)]
+    }
+
+    private func observeManifestChange(_ plan: Plan) -> String? {
+        guard let lockGuard = try? locks.acquire(manifestChangeReadLocks(home: plan.home, manifest: plan.manifestPath)) else {
+            return nil
+        }
+        defer { lockGuard.release() }
+        return try? manifestChangeFingerprint(plan)
     }
 
     /// Requests cancellation of a non-terminal job (idempotent).
@@ -715,9 +800,9 @@ private func lockRequests(_ spec: JobSpec) -> [(ResourceKey, LockMode)] {
     var reqs: [(ResourceKey, LockMode)] = [(.homebrew, .shared)]
     switch spec {
     case let .scan(s):
-        if let m = s.manifest { reqs.append((.manifest(m), .shared)) }
+        if let m = s.manifest { reqs.append((.manifestPath(m), .shared)) }
     case let .status(s):
-        reqs.append((.manifest(s.manifest), .shared))
+        reqs.append((.manifestPath(s.manifest), .shared))
     }
     return reqs
 }
@@ -726,7 +811,7 @@ private func stepStage(_ status: StepStatus) -> String {
     status.rawValue
 }
 
-private func validatePlanInput(_ input: PlanInput) throws(ProtocolError) {
+func validatePlanInput(_ input: PlanInput) throws(ProtocolError) {
     try validatePath("manifest", input.manifest)
     try validatePath("home", input.home)
     if let repo = input.repoRoot {

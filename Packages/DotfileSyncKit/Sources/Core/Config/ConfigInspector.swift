@@ -310,7 +310,7 @@ func lstatPath(_ path: FilePath) -> Result<stat, OSIOError> {
 }
 
 /// Rust `fs::canonicalize` (realpath).
-func canonicalize(_ path: FilePath) throws(OSIOError) -> FilePath {
+package func canonicalize(_ path: FilePath) throws(OSIOError) -> FilePath {
     let resolved: UnsafeMutablePointer<CChar>? = path.withPlatformString { realpath($0, nil) }
     guard let resolved else {
         throw OSIOError.current()

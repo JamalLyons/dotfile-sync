@@ -166,6 +166,11 @@ Requests are `{"op":"<name>","params":{...}}`, at most 64 KiB.
 | `plan.resume` | Redeem a new token and continue a run. Params: `run_id`, `token`, `allow_sudo`. |
 | `plan.runs` | List runs, including `interrupted` ones. |
 | `plan.run_status` | One run's journal and status. |
+| `config.discover`, `config.tree`, `config.diff` | Read-only config discovery, working-tree statuses, and one file's diff against its repo source. |
+| `config.open`, `config.save`, `config.create`, `config.rename` | Confined config editor: read with a version, save with backup and conflict check, create, rename. |
+| `config.promote`, `config.demote` | Plan enrolling or un-enrolling files. Return a normal plan, approved with `plan.approve` and applied with `plan.apply`. |
+
+Parameters and results of the `config.*` ops: see `Sources/IPC/Messages.swift`. Behavior: [config-editor.md](config-editor.md).
 
 Errors are `{code, message, details?}`. `approval_rejected` carries `details.reason`: one of
 `unknown_token`, `expired`, `already_used`, `plan_mismatch`, `state_changed`, `wrong_owner`,
@@ -282,6 +287,6 @@ SIGTERM and SIGINT request a graceful shutdown.
 
 ## 12. Out of scope (later issues)
 
-- Toolchains (#5), config editor (#11), sync (#6) and the FSEvents watcher (#7).
+- Toolchains (#5), sync (#6) and the FSEvents watcher (#7). The config editor shipped with #11: [config-editor.md](config-editor.md).
 - A privileged helper via `SMAppService.daemon` for `sudo` steps.
 - Crash auto-restart (`KeepAlive`).

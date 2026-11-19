@@ -36,12 +36,20 @@ public let IMPLEMENTED_OPS: [String] = [
     "plan.resume",
     "plan.runs",
     "plan.run_status",
+    "config.discover",
+    "config.tree",
+    "config.diff",
+    "config.open",
+    "config.save",
+    "config.create",
+    "config.rename",
+    "config.promote",
+    "config.demote",
 ]
 
 /// Operation namespaces reserved for later issues, answered with `unsupported_operation`.
 public let RESERVED_OPS: [(prefix: String, why: String)] = [
     ("runtime.", "toolchain/runtime management arrives with issue #5"),
-    ("config.", "config discovery and editing arrives with issue #11"),
     ("sync.", "GitHub state-repo sync arrives with issues #6 and #7"),
 ]
 
@@ -65,6 +73,15 @@ public enum Request: Codable, Sendable, Equatable {
     case planResume(runId: String, token: String, allowSudo: Bool)
     case planRuns
     case planRunStatus(runId: String)
+    case configDiscover(home: FilePath? = nil)
+    case configTree(manifest: FilePath, home: FilePath? = nil, repoRoot: FilePath? = nil, profile: String? = nil)
+    case configDiff(target: FilePath, manifest: FilePath, home: FilePath? = nil, repoRoot: FilePath? = nil, profile: String? = nil)
+    case configOpen(path: String)
+    case configSave(path: String, text: String, expectedVersion: FileVersion, force: Bool = false)
+    case configCreate(path: String, text: String)
+    case configRename(from: String, to: String)
+    case configPromote(input: PlanInput, targets: [FilePath])
+    case configDemote(input: PlanInput, targets: [FilePath])
 
     /// The wire name of this operation (`IMPLEMENTED_OPS`).
     public var opName: String {
@@ -85,6 +102,15 @@ public enum Request: Codable, Sendable, Equatable {
         case .planResume: return "plan.resume"
         case .planRuns: return "plan.runs"
         case .planRunStatus: return "plan.run_status"
+        case .configDiscover: return "config.discover"
+        case .configTree: return "config.tree"
+        case .configDiff: return "config.diff"
+        case .configOpen: return "config.open"
+        case .configSave: return "config.save"
+        case .configCreate: return "config.create"
+        case .configRename: return "config.rename"
+        case .configPromote: return "config.promote"
+        case .configDemote: return "config.demote"
         }
     }
 
@@ -102,6 +128,9 @@ public enum Request: Codable, Sendable, Equatable {
         case token
         case allowSudo = "allow_sudo"
         case runId = "run_id"
+        case home, manifest, profile, target, targets, path, text, force, from, to
+        case repoRoot = "repo_root"
+        case expectedVersion = "expected_version"
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -133,6 +162,35 @@ public enum Request: Codable, Sendable, Equatable {
             try p.encode(allowSudo, forKey: .allowSudo)
         case let .planRunStatus(runId):
             try p.encode(runId, forKey: .runId)
+        case let .configDiscover(home):
+            try p.encodeIfPresent(home?.string, forKey: .home)
+        case let .configTree(manifest, home, repoRoot, profile), let .configDiff(_, manifest, home, repoRoot, profile):
+            try p.encode(manifest.string, forKey: .manifest)
+            try p.encodeIfPresent(home?.string, forKey: .home)
+            try p.encodeIfPresent(repoRoot?.string, forKey: .repoRoot)
+            try p.encodeIfPresent(profile, forKey: .profile)
+            if case let .configDiff(target, _, _, _, _) = self {
+                try p.encode(target.string, forKey: .target)
+            }
+        case let .configOpen(path):
+            try p.encode(path, forKey: .path)
+        case let .configSave(path, text, expectedVersion, force):
+            try p.encode(path, forKey: .path)
+            try p.encode(text, forKey: .text)
+            try p.encode(expectedVersion, forKey: .expectedVersion)
+            try p.encode(force, forKey: .force)
+        case let .configCreate(path, text):
+            try p.encode(path, forKey: .path)
+            try p.encode(text, forKey: .text)
+        case let .configRename(from, to):
+            try p.encode(from, forKey: .from)
+            try p.encode(to, forKey: .to)
+        case let .configPromote(input, targets), let .configDemote(input, targets):
+            try p.encode(input.manifest.string, forKey: .manifest)
+            try p.encode(input.home.string, forKey: .home)
+            try p.encodeIfPresent(input.repoRoot?.string, forKey: .repoRoot)
+            try p.encodeIfPresent(input.profile, forKey: .profile)
+            try p.encode(targets.map(\.string), forKey: .targets)
         }
     }
 
@@ -149,6 +207,7 @@ public enum Request: Codable, Sendable, Equatable {
             case "list_jobs": self = .listJobs
             case "shutdown": self = .shutdown
             case "plan.runs": self = .planRuns
+            case "config.discover": self = .configDiscover()
             default:
                 throw DecodingError.keyNotFound(
                     EnvelopeKeys.params,
@@ -197,11 +256,56 @@ public enum Request: Codable, Sendable, Equatable {
             )
         case "plan.runs": self = .planRuns
         case "plan.run_status": self = .planRunStatus(runId: try p.decode(String.self, forKey: .runId))
+        case "config.discover": self = .configDiscover(home: try Self.optionalPath(.home, from: p))
+        case "config.tree", "config.diff":
+            let manifest = try Self.path(p.decode(String.self, forKey: .manifest), at: .manifest, in: p)
+            let home = try Self.optionalPath(.home, from: p)
+            let repoRoot = try Self.optionalPath(.repoRoot, from: p)
+            let profile = try p.decodeIfPresent(String.self, forKey: .profile)
+            if op == "config.diff" {
+                let target = try Self.path(p.decode(String.self, forKey: .target), at: .target, in: p)
+                self = .configDiff(target: target, manifest: manifest, home: home, repoRoot: repoRoot, profile: profile)
+            } else {
+                self = .configTree(manifest: manifest, home: home, repoRoot: repoRoot, profile: profile)
+            }
+        case "config.open":
+            self = .configOpen(path: try p.decode(String.self, forKey: .path))
+        case "config.save":
+            self = .configSave(
+                path: try p.decode(String.self, forKey: .path),
+                text: try p.decode(String.self, forKey: .text),
+                expectedVersion: try p.decode(FileVersion.self, forKey: .expectedVersion),
+                force: try p.decodeIfPresent(Bool.self, forKey: .force) ?? false
+            )
+        case "config.create":
+            self = .configCreate(path: try p.decode(String.self, forKey: .path), text: try p.decode(String.self, forKey: .text))
+        case "config.rename":
+            self = .configRename(from: try p.decode(String.self, forKey: .from), to: try p.decode(String.self, forKey: .to))
+        case "config.promote", "config.demote":
+            let input = try PlanInput(
+                manifest: Self.path(p.decode(String.self, forKey: .manifest), at: .manifest, in: p),
+                home: Self.path(p.decode(String.self, forKey: .home), at: .home, in: p),
+                repoRoot: Self.optionalPath(.repoRoot, from: p),
+                profile: p.decodeIfPresent(String.self, forKey: .profile)
+            )
+            let targets = try p.decode([String].self, forKey: .targets).map { try Self.path($0, at: .targets, in: p) }
+            self = op == "config.promote" ? .configPromote(input: input, targets: targets) : .configDemote(input: input, targets: targets)
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .op, in: c, debugDescription: "unknown variant `\(op)`"
             )
         }
+    }
+
+    private static func optionalPath(_ key: ParamKeys, from params: KeyedDecodingContainer<ParamKeys>) throws -> FilePath? {
+        try params.decodeIfPresent(String.self, forKey: key).map { try path($0, at: key, in: params) }
+    }
+
+    private static func path(_ raw: String, at key: ParamKeys, in params: KeyedDecodingContainer<ParamKeys>) throws -> FilePath {
+        guard !raw.utf8.contains(0) else {
+            throw DecodingError.dataCorruptedError(forKey: key, in: params, debugDescription: "path contains a NUL byte")
+        }
+        return FilePath(raw)
     }
 
     /// Classifies `op` before decoding (Rust `Request::from_frame`): reserved namespaces give
@@ -409,9 +513,14 @@ public enum Response: Codable, Sendable, Equatable {
     case approval(ApprovalGrant)
     case runs([RunSummary])
     case run(RunView)
+    case configDiscovery(ConfigDiscoveryReport)
+    case configTree(WorkingTree)
+    case configDiff(ConfigFileDiff)
+    case configDocument(ConfigDocument)
+    case configWrite(ConfigWriteReport)
 
     private enum CodingKeys: String, CodingKey {
-        case response, jobs, job, events, truncated, runs
+        case response, jobs, job, events, truncated, runs, report, tree, diff, document
     }
 
     public init(from decoder: any Decoder) throws {
@@ -433,6 +542,11 @@ public enum Response: Codable, Sendable, Equatable {
         case "approval": self = .approval(try ApprovalGrant(from: decoder))
         case "runs": self = .runs(try c.decode([RunSummary].self, forKey: .runs))
         case "run": self = .run(try RunView(from: decoder))
+        case "config_discovery": self = .configDiscovery(try c.decode(ConfigDiscoveryReport.self, forKey: .report))
+        case "config_tree": self = .configTree(try c.decode(WorkingTree.self, forKey: .tree))
+        case "config_diff": self = .configDiff(try c.decode(ConfigFileDiff.self, forKey: .diff))
+        case "config_document": self = .configDocument(try c.decode(ConfigDocument.self, forKey: .document))
+        case "config_write": self = .configWrite(try c.decode(ConfigWriteReport.self, forKey: .report))
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .response, in: c, debugDescription: "unknown variant `\(tag)`"
@@ -473,6 +587,21 @@ public enum Response: Codable, Sendable, Equatable {
         case let .run(view):
             try c.encode("run", forKey: .response)
             try view.encode(to: encoder)
+        case let .configDiscovery(report):
+            try c.encode("config_discovery", forKey: .response)
+            try c.encode(report, forKey: .report)
+        case let .configTree(tree):
+            try c.encode("config_tree", forKey: .response)
+            try c.encode(tree, forKey: .tree)
+        case let .configDiff(diff):
+            try c.encode("config_diff", forKey: .response)
+            try c.encode(diff, forKey: .diff)
+        case let .configDocument(document):
+            try c.encode("config_document", forKey: .response)
+            try c.encode(document, forKey: .document)
+        case let .configWrite(report):
+            try c.encode("config_write", forKey: .response)
+            try c.encode(report, forKey: .report)
         }
     }
 }

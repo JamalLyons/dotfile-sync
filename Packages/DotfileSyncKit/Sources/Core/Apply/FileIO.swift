@@ -23,21 +23,31 @@ public func ensureDir(_ path: FilePath) throws(ApplyIOError) {
     }
 }
 
-/// Writes `bytes` to `<target>.tmp` next to `target`, fsyncs it, sets `mode`, then renames it
-/// over `target`. Missing parent directories are created with mode `0755`.
+/// Writes `bytes` to an exclusive, randomly named sibling temp file (`O_CREAT|O_EXCL|O_NOFOLLOW`),
+/// fsyncs it, sets `mode`, then renames it over `target`. Missing parent directories are created
+/// with mode `0755`. A pre-existing file or symlink at any predictable name is never opened.
 public func writeAtomic(_ target: FilePath, bytes: [UInt8], mode: UInt32) throws(ApplyIOError) {
     let parent = rustParent(target).flatMap { $0.isEmpty ? nil : $0 }
     if let parent {
         try ensureDir(parent)
     }
-    var tmpName = rustFileName(target) ?? Array("file".utf8)
-    tmpName.append(contentsOf: Array(".tmp".utf8))
-    let tmpComponent = filePath(fromBytes: tmpName)
-    let tmp = parent.map { $0.pushing(tmpComponent) } ?? tmpComponent
-
-    let fd = tmp.withPlatformString { open($0, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o666) }
+    let baseName = rustFileName(target) ?? Array("file".utf8)
+    var fd: Int32 = -1
+    var tmp = FilePath("")
+    for _ in 0..<16 {
+        var tmpName = Array(".".utf8) + baseName
+        tmpName.append(contentsOf: Array(".dotfilesync-\(randomHex(8)).tmp".utf8))
+        let tmpComponent = filePath(fromBytes: tmpName)
+        tmp = parent.map { $0.pushing(tmpComponent) } ?? tmpComponent
+        fd = tmp.withPlatformString { open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600) }
+        if fd >= 0 || errno != EEXIST { break }
+    }
     if fd < 0 {
         throw ApplyIOError("failed to open temp file '\(tmp.string)': \(OSIOError.current())")
+    }
+    var renamed = false
+    defer {
+        if !renamed { _ = tmp.withPlatformString { unlink($0) } }
     }
     do {
         defer { close(fd) }
@@ -47,7 +57,7 @@ public func writeAtomic(_ target: FilePath, bytes: [UInt8], mode: UInt32) throws
         if let error = fullFsync(fd) {
             throw ApplyIOError("failed to fsync '\(tmp.string)': \(error)")
         }
-        if tmp.withPlatformString({ chmod($0, mode_t(mode)) }) != 0 {
+        if fchmod(fd, mode_t(mode)) != 0 {
             throw ApplyIOError("failed to set mode on '\(tmp.string)': \(OSIOError.current())")
         }
     }
@@ -56,6 +66,13 @@ public func writeAtomic(_ target: FilePath, bytes: [UInt8], mode: UInt32) throws
             "failed to rename '\(tmp.string)' to '\(target.string)': \(OSIOError.current())"
         )
     }
+    renamed = true
+}
+
+private func randomHex(_ byteCount: Int) -> String {
+    var bytes = [UInt8](repeating: 0, count: byteCount)
+    arc4random_buf(&bytes, byteCount)
+    return bytes.map { String($0, radix: 16).count == 1 ? "0" + String($0, radix: 16) : String($0, radix: 16) }.joined()
 }
 
 /// Writes `bytes` to `path` (create/truncate, mode `0666` before umask) and fsyncs it.
