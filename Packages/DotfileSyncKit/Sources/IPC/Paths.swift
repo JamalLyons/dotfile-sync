@@ -57,6 +57,8 @@ public struct DataLayout: Sendable, Equatable {
     public var runsDir: FilePath
     /// `<root>/backups/<run_id>/` holds files replaced by apply.
     public var backupsDir: FilePath
+    /// Previous contents saved by the config editor.
+    public var editorBackupsDir: FilePath { backupsDir.appending("editor") }
     public var logsDir: FilePath
     /// `<logs>/dotfilesyncd.log` (name kept from the Rust daemon so state stays compatible).
     public var logFile: FilePath

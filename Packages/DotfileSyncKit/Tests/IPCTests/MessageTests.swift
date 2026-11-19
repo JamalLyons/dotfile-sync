@@ -69,6 +69,11 @@ private let emptyScan = ScanReport(homebrew: BrewDiscoveryResult(), configs: [],
         }
         #expect(code("runtime.x", nil) == .unsupportedOperation)
         #expect(code("sync.push", nil) == .unsupportedOperation)
+        #expect(RESERVED_OPS.map(\.prefix) == ["runtime.", "sync."])
+        #expect(code("config.future", nil) == .unknownOperation)
+        #expect(code("config.diff", #"{"target":"file"}"#) == .invalidParams)
+        #expect(code("config.tree", #"{"manifest":"/m\u0000.toml"}"#) == .invalidParams)
+        #expect(code("config.promote", #"{"manifest":"/m","home":"/h","targets":["/h/file\u0000"]}"#) == .invalidParams)
         #expect(code("exec", nil) == .unknownOperation)
         #expect(code("job_status", #"{"job_id":5}"#) == .invalidParams)
     }
@@ -117,11 +122,36 @@ private let emptyScan = ScanReport(homebrew: BrewDiscoveryResult(), configs: [],
             .planCreate(input: PlanInput(manifest: FilePath("/m"), home: FilePath("/h"))),
             .planApprove(planId: "p", digest: "d"), .planApply(planId: "p", token: "t", allowSudo: false),
             .planResume(runId: "r", token: "t", allowSudo: false), .planRuns, .planRunStatus(runId: "r"),
-        ]
+        ] + configRequests.map(\.0)
         #expect(all.map(\.opName) == IMPLEMENTED_OPS)
         for r in all {
             #expect(try Request.decode(json: Data(try compact(r).utf8)) == r)
         }
+    }
+
+    @Test(arguments: configRequests)
+    func configRequestsRoundTrip(_ request: Request, _ wire: String) throws {
+        #expect(try compact(request) == wire)
+        #expect(try Request.decode(op: request.opName, params: params(request)) == request)
+        #expect(try Request.decode(json: Data(wire.utf8)) == request)
+    }
+
+    @Test func configOptionalParamsDefault() throws {
+        #expect(try Request.decode(op: "config.discover", params: nil) == .configDiscover())
+        #expect(try Request.decode(json: Data(#"{"op":"config.discover","params":null}"#.utf8)) == .configDiscover())
+        #expect(try Request.decode(op: "config.tree", params: Data(#"{"manifest":"/m"}"#.utf8)) == .configTree(manifest: "/m"))
+        let save = #"{"path":"/h/f","text":"new","expected_version":{"mtime_ns":1700000000000000123,"size":4,"sha256":"abc"}}"#
+        #expect(try Request.decode(op: "config.save", params: Data(save.utf8))
+            == .configSave(path: "/h/f", text: "new", expectedVersion: configVersion))
+    }
+
+    @Test(arguments: configResponses)
+    func configResponsesRoundTrip(_ wire: String) throws {
+        let response = try JSONDecoder().decode(Response.self, from: Data(wire.utf8))
+        let encoded = try JSONEncoder().encode(response)
+        #expect(try JSONDecoder().decode(AnyJSON.self, from: encoded)
+            == JSONDecoder().decode(AnyJSON.self, from: Data(wire.utf8)))
+        #expect(try roundTrip(Outcome.ok(response)) == .ok(response))
     }
 
     @Test func allowSudoDefaultsToFalse() throws {
@@ -194,11 +224,44 @@ private let emptyScan = ScanReport(homebrew: BrewDiscoveryResult(), configs: [],
             "incompatible_version", "unauthorized", "malformed_request", "frame_too_large",
             "handshake_required", "unknown_operation", "unsupported_operation", "invalid_params",
             "job_not_found", "job_not_finished", "job_failed", "busy", "shutting_down", "internal",
-            "plan_not_found", "approval_rejected", "unknown",
+            "plan_not_found", "approval_rejected", "not_found", "conflict", "unknown",
         ]
         #expect(ErrorCode.allCases.map(\.rawValue) == expected)
     }
 }
+
+private let configInput = PlanInput(manifest: "/m", home: "/h", repoRoot: "/r", profile: "work")
+private let configVersion = FileVersion(mtimeNs: 1_700_000_000_000_000_123, size: 4, sha256: "abc")
+private let configRequests: [(Request, String)] = [
+    (.configDiscover(home: "/h"),
+     #"{"op":"config.discover","params":{"home":"/h"}}"#),
+    (.configTree(manifest: "/m", home: "/h", repoRoot: "/r", profile: "work"),
+     #"{"op":"config.tree","params":{"manifest":"/m","home":"/h","repo_root":"/r","profile":"work"}}"#),
+    (.configDiff(target: "f", manifest: "/m", home: "/h", repoRoot: "/r", profile: "work"),
+     #"{"op":"config.diff","params":{"manifest":"/m","home":"/h","repo_root":"/r","profile":"work","target":"f"}}"#),
+    (.configOpen(path: "/h/f"),
+     #"{"op":"config.open","params":{"path":"/h/f"}}"#),
+    (.configSave(path: "/h/f", text: "new", expectedVersion: configVersion, force: true),
+     #"{"op":"config.save","params":{"path":"/h/f","text":"new","expected_version":{"mtime_ns":1700000000000000123,"size":4,"sha256":"abc"},"force":true}}"#),
+    (.configCreate(path: "/h/f", text: "new"),
+     #"{"op":"config.create","params":{"path":"/h/f","text":"new"}}"#),
+    (.configRename(from: "/h/f", to: "/h/g"),
+     #"{"op":"config.rename","params":{"from":"/h/f","to":"/h/g"}}"#),
+    (.configPromote(input: configInput, targets: ["/h/f"]),
+     #"{"op":"config.promote","params":{"manifest":"/m","home":"/h","repo_root":"/r","profile":"work","targets":["/h/f"]}}"#),
+    (.configDemote(input: configInput, targets: ["/h/f"]),
+     #"{"op":"config.demote","params":{"manifest":"/m","home":"/h","repo_root":"/r","profile":"work","targets":["/h/f"]}}"#),
+]
+
+private let configResponses = [
+    #"{"response":"config_discovery","report":{"tools":[],"entries":[],"truncated":false,"diagnostics":[]}}"#,
+    #"{"response":"config_tree","tree":{"root":{"relative_path":"","kind":"directory","class":"config","aggregate":{"managed":0,"modified":0,"unmanaged":0,"excluded":0},"children":[]},"truncated":false,"diagnostics":[]}}"#,
+    #"{"response":"config_diff","diff":{"relative_path":"f","status":"no_base","target_missing":false,"additions":0,"deletions":0,"hunks":[]}}"#,
+    #"{"response":"config_document","document":{"path":"/h/f","text":"new","is_binary":false,"mode":384,"version":{"mtime_ns":1700000000000000123,"size":3,"sha256":"abc"}}}"#,
+    #"{"response":"config_document","document":{"path":"/h/f","bytes_base64":"AA==","is_binary":true,"mode":384,"version":{"mtime_ns":1700000000000000123,"size":1,"sha256":"abc"}}}"#,
+    #"{"response":"config_write","report":{"path":"/h/f","backup_path":"/backups/f","new_version":{"mtime_ns":1700000000000000123,"size":4,"sha256":"abc"}}}"#,
+    #"{"response":"config_write","report":{"path":"/h/f","new_version":{"mtime_ns":1700000000000000123,"size":4,"sha256":"abc"}}}"#,
+]
 
 private let failedApply = JobSnapshot(
     jobId: "j-1", kind: .apply, status: .failed, createdAtMs: 1, finishedAtMs: 5, latestSeq: 2,

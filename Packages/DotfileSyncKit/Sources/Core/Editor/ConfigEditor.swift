@@ -26,11 +26,29 @@ public struct ConfigEditor: Sendable {
         maxFileSize: Int = 1_048_576,
         now: @escaping @Sendable () -> UInt64 = { UInt64(Date().timeIntervalSince1970 * 1_000) }
     ) throws(EditorError) {
+        try self.init(allowedRoots: allowedRoots, backupRoot: backupRoot, maxFileSize: maxFileSize, now: now, confiningRootsTo: nil)
+    }
+
+    /// For discovery-derived roots, refuse directory aliases below the trusted home.
+    package init(
+        allowedRoots: [FilePath],
+        backupRoot: FilePath,
+        maxFileSize: Int = 1_048_576,
+        now: @escaping @Sendable () -> UInt64,
+        confiningRootsTo home: FilePath?
+    ) throws(EditorError) {
         guard maxFileSize >= 0 else { throw .io(message: "max file size must be nonnegative") }
+        let home = try home.map { path throws(EditorError) in try Self.validate(path) }
+        let canonicalHome = try home.map { path throws(EditorError) in try editorCanonicalDirectory(path) }
         var roots: [(alias: FilePath, canonical: FilePath)] = []
         for root in allowedRoots {
             let alias = try Self.validate(root)
             let canonical = try editorCanonicalDirectory(alias)
+            if let home, let canonicalHome {
+                var relative = alias
+                guard relative.removePrefix(home), !relative.isEmpty else { throw .outsideRoots }
+                guard canonical == canonicalHome.pushing(relative) else { throw .symlinkEscape }
+            }
             roots.append((alias, canonical))
             if alias != canonical { roots.append((canonical, canonical)) }
         }

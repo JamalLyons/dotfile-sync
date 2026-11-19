@@ -147,7 +147,7 @@ public final class ApprovalStore: Sendable, CustomStringConvertible {
         _ token: ApprovalToken,
         plan: ApprovalPlan,
         callerUid: UInt32,
-        currentState: String,
+        currentState: String?,
         nowMs: UInt64
     ) throws(ApprovalError) {
         let result: ApprovalError? = approvals.withLock { map in

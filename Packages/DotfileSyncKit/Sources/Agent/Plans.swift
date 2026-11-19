@@ -13,10 +13,16 @@ import System
 /// Plans kept in memory.
 public let MAX_PLANS = 32
 
-/// A computed plan plus the input and owner it was computed for.
+/// How a plan observes the state it was computed from.
+public enum PlanOrigin: Sendable, Equatable {
+    case desiredState(PlanInput)
+    case manifestChange
+}
+
+/// A computed plan plus its origin and owner.
 public struct StoredPlan: Sendable, Equatable {
     public var plan: Plan
-    public var input: PlanInput
+    public var origin: PlanOrigin
     public var ownerUid: UInt32
 }
 
@@ -173,10 +179,10 @@ public final class RunIndex: Sendable {
     }
 
     /// Records a new run in `dir` (run id not yet known).
-    public func begin(jobId: String, dir: FilePath, plan: Plan, input: PlanInput) {
+    public func begin(jobId: String, dir: FilePath, plan: Plan, profile: String?) {
         let meta = RunMeta(
             runId: "", dir: dir, planId: plan.planId, planDigest: plan.digest,
-            jobId: jobId, status: .running, profile: input.profile
+            jobId: jobId, status: .running, profile: profile
         )
         do {
             try writeMeta(meta)
@@ -274,6 +280,15 @@ public final class RunIndex: Sendable {
     public func isActive(_ runId: String) -> Bool {
         inner.withLock { $0.contains { $0.runId == runId && $0.status == .running } }
     }
+
+    func canResume(_ plan: Plan) -> Bool {
+        inner.withLock { runs in
+            runs.contains {
+                !$0.runId.isEmpty && $0.planId == plan.planId && $0.planDigest == plan.digest
+                    && $0.unrecoverable == nil && $0.status != .running && $0.status != .succeeded
+            }
+        }
+    }
 }
 
 struct RunLoadError: Error {
@@ -304,13 +319,17 @@ private func storedFromDir(_ dir: FilePath, _ meta: RunMeta, _ ownerUid: UInt32)
     if plan.digest != meta.planDigest {
         return .failure(.planDigestMismatch)
     }
-    let input = PlanInput(
-        manifest: plan.manifestPath,
-        home: plan.home,
-        repoRoot: plan.repoRoot,
-        profile: meta.profile ?? plan.profile
+    // Action kinds are part of the verified plan digest, including on older run files.
+    let isManifestChange = !plan.actions.isEmpty && plan.actions.allSatisfy { action in
+        switch action.kind {
+        case .promoteFile, .demoteFile: return true
+        default: return false
+        }
+    }
+    let origin: PlanOrigin = isManifestChange ? .manifestChange : .desiredState(
+        PlanInput(manifest: plan.manifestPath, home: plan.home, repoRoot: plan.repoRoot, profile: meta.profile ?? plan.profile)
     )
-    return .success(StoredPlan(plan: plan, input: input, ownerUid: ownerUid))
+    return .success(StoredPlan(plan: plan, origin: origin, ownerUid: ownerUid))
 }
 
 private func loadRun(_ dir: FilePath) -> Result<RunMeta, RunLoadError> {

@@ -15,6 +15,11 @@ public struct FileVersion: Codable, Sendable, Equatable {
         self.size = size
         self.sha256 = sha256
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case mtimeNs = "mtime_ns"
+        case size, sha256
+    }
 }
 
 /// A snapshot of a regular file, with binary content available for viewing only.

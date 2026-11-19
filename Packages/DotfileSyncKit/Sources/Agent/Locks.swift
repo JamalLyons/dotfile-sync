@@ -4,6 +4,7 @@
 // locks, which wait only for holders of the *same* resource. A request for several resources
 // is granted all-or-nothing under one mutex, so lock ordering cannot deadlock.
 
+import Core
 import Foundation
 import System
 
@@ -21,6 +22,14 @@ public enum ResourceKey: Sendable, Hashable, Comparable {
     case home(FilePath)
     /// Test-only resources. Never derived from client-supplied strings.
     case named(String)
+
+    static func manifestPath(_ path: FilePath) -> ResourceKey {
+        .manifest((try? canonicalize(path)) ?? path.lexicallyNormalized())
+    }
+
+    static func homeDirectory(_ path: FilePath) -> ResourceKey {
+        .home((try? canonicalize(path)) ?? path.lexicallyNormalized())
+    }
 
     private var order: (Int, String) {
         switch self {

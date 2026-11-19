@@ -91,7 +91,8 @@ final class Env {
             brewBin: brew,
             shutdownGrace: .seconds(3),
             heartbeatInterval: .milliseconds(200),
-            presence: SkipUserPresence()
+            presence: SkipUserPresence(),
+            home: home
         )
     }
 

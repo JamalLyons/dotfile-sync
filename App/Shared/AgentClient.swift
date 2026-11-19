@@ -161,6 +161,11 @@ extension Response {
         case .approval: return "approval"
         case .runs: return "runs"
         case .run: return "run"
+        case .configDiscovery: return "config_discovery"
+        case .configTree: return "config_tree"
+        case .configDiff: return "config_diff"
+        case .configDocument: return "config_document"
+        case .configWrite: return "config_write"
         }
     }
 }

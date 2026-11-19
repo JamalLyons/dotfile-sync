@@ -72,6 +72,8 @@ private func json(_ s: String) -> Data { Data(s.utf8) }
         }
         #expect(reserved.code == .unsupportedOperation)
         #expect(reserved.message.contains("#5"))
+        #expect(code(#"{"op":"sync.push"}"#) == .unsupportedOperation)
+        #expect(code(#"{"op":"config.future"}"#) == .unknownOperation)
         #expect(code(#"{"op":"start_job","params":{"spec":{"kind":"scan","manifest":null,"home":"relative/home","repo_root":null}}}"#) == .invalidParams)
         #expect(d.handle(json: json(#"{"op":"ping"}"#)) == .ok(.pong))
         #expect(code("\u{FF}\u{FE} not json") == .malformedRequest)

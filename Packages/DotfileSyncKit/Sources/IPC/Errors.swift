@@ -20,6 +20,8 @@ public enum ErrorCode: String, Codable, Sendable, Hashable, CaseIterable {
     case `internal`
     case planNotFound = "plan_not_found"
     case approvalRejected = "approval_rejected"
+    case notFound = "not_found"
+    case conflict
     /// An error code introduced by a newer agent (serde `#[serde(other)]`).
     case unknown
 

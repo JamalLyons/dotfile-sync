@@ -18,6 +18,8 @@ public let AGENT_VERSION = "0.1.0"
 /// Configuration for an ``AgentService``.
 public struct AgentConfig: Sendable {
     public var layout: DataLayout
+    /// The agent owner's home directory, independent of request parameters and the data layout.
+    public var home: FilePath
     /// Homebrew binary chosen by the agent owner at startup. Never taken from requests.
     public var brewBin: FilePath?
     public var jobs: JobLimits
@@ -41,9 +43,11 @@ public struct AgentConfig: Sendable {
         shutdownGrace: Duration = .seconds(5),
         heartbeatInterval: Duration = .seconds(5),
         ownerUid: UInt32 = geteuid(),
-        presence: any UserPresenceVerifier = LocalAuthenticationPresence()
+        presence: any UserPresenceVerifier = LocalAuthenticationPresence(),
+        home: FilePath = FilePath(NSHomeDirectory())
     ) {
         self.layout = layout
+        self.home = home
         self.brewBin = brewBin
         self.jobs = jobs
         self.logMaxBytes = logMaxBytes
@@ -77,6 +81,7 @@ public final class AgentService: Sendable {
     public let recoveredInterrupted: Int
     private let jobs: JobManager
     private let log: Logger
+    private let configs: ConfigOperations
     private let started = ContinuousClock.now
     private let shutdownRequested = Monitor(false)
     private let stopped = Mutex<Int?>(nil)
@@ -108,18 +113,20 @@ public final class AgentService: Sendable {
         if recovery.newlyInterrupted > 0 {
             log.warn("journal: \(recovery.newlyInterrupted) job(s) from the previous run were interrupted and will not be replayed")
         }
+        let locks = ResourceLocks()
         jobs = JobManager(
             journal: journal,
             log: log,
-            locks: ResourceLocks(),
+            locks: locks,
             brewBin: config.brewBin,
             limits: config.jobs,
             recovered: recovery.jobs,
-            paths: JobPaths(runsDir: layout.runsDir, backupsDir: layout.backupsDir, ownerUid: config.ownerUid),
+            paths: JobPaths(runsDir: layout.runsDir, backupsDir: layout.backupsDir, ownerUid: config.ownerUid, home: config.home),
             presence: config.presence
         )
         self.config = config
         self.log = log
+        configs = ConfigOperations(config: config, locks: locks, log: log)
         recoveredInterrupted = recovery.newlyInterrupted
         log.info("dotfilesyncd \(AGENT_VERSION) started pid=\(getpid()) protocol=\(PROTOCOL_VERSION)")
     }
@@ -264,6 +271,30 @@ public final class AgentService: Sendable {
             return .runs(jobs.listRuns())
         case let .planRunStatus(runId):
             return .run(try jobs.runStatus(runId))
+        case let .configDiscover(home):
+            return .configDiscovery(try configs.discover(home: home))
+        case let .configTree(manifest, home, repoRoot, profile):
+            return .configTree(try configs.tree(manifest: manifest, home: home, repoRoot: repoRoot, profile: profile))
+        case let .configDiff(target, manifest, home, repoRoot, profile):
+            return .configDiff(try configs.diff(target: target, manifest: manifest, home: home, repoRoot: repoRoot, profile: profile))
+        case let .configOpen(path):
+            return .configDocument(try configs.open(path: path))
+        case let .configSave(path, text, version, force):
+            return try editConfig(paths: [path]) { editor throws(EditorError) in
+                try editor.save(path: path, text: text, expectedVersion: version, force: force)
+            }
+        case let .configCreate(path, text):
+            return try editConfig(paths: [path]) { editor throws(EditorError) in
+                try editor.create(path: path, text: text)
+            }
+        case let .configRename(from, to):
+            return try editConfig(paths: [from, to]) { editor throws(EditorError) in
+                try editor.rename(from: from, to: to)
+            }
+        case let .configPromote(input, targets):
+            return .job(try startConfigPlan(input, change: .promote(targets: targets)))
+        case let .configDemote(input, targets):
+            return .job(try startConfigPlan(input, change: .demote(targets: targets)))
         case .shutdown:
             log.info("shutdown requested over IPC")
             requestShutdown()
@@ -271,6 +302,20 @@ public final class AgentService: Sendable {
         case .watchJob:
             throw ProtocolError(.internal, "watch_job is handled by watch()")
         }
+    }
+
+    private func editConfig(
+        paths: [String],
+        _ write: (ConfigEditor) throws(EditorError) -> EditorWriteReport
+    ) throws(ProtocolError) -> Response {
+        .configWrite(try configs.edit(paths: paths, write, shuttingDown: { self.isShutdownRequested }))
+    }
+
+    private func startConfigPlan(_ input: PlanInput, change: ManifestChange) throws(ProtocolError) -> JobSnapshot {
+        guard !isShutdownRequested else {
+            throw ProtocolError(.shuttingDown, "daemon is shutting down")
+        }
+        return try jobs.startManifestChange(input, change: change, ownerUid: config.ownerUid)
     }
 
     // MARK: - Shutdown

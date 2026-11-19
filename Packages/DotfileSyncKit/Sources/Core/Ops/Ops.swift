@@ -129,7 +129,7 @@ public struct StatusInput: Codable, Sendable, Equatable {
 }
 
 /// `repo_root`, else the manifest's non-empty parent, else `.`.
-func defaultRepoRoot(manifest: FilePath, repoRoot: FilePath?) -> FilePath {
+package func defaultRepoRoot(manifest: FilePath, repoRoot: FilePath?) -> FilePath {
     if let repoRoot {
         return repoRoot
     }
