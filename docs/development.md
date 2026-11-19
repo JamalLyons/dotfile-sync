@@ -9,6 +9,21 @@
 
 ## Build and install the signed app
 
+With [just](https://just.systems) (`brew install just`), run `just` to list recipes:
+
+| Recipe | Does |
+|---|---|
+| `just local-install` | Signed Release build, replaces `/Applications/DotfileSync.app`, links the CLI to `~/.local/bin/dotfilesync`, registers the agent, opens the app |
+| `just uninstall-local` | Removes the app, CLI link, agent registration, preferences, TCC grants and `~/Library/Application Support/dotfilesync` (`--yes` skips the prompt). Dotfiles and manifest are kept |
+| `just status` / `just logs` | What is installed; tail the agent log |
+| `just ci` | Package and app build + tests, as CI runs them |
+
+The signing team comes from `DEVELOPMENT_TEAM` or your Apple Development certificate.
+`DOTFILESYNC_INSTALL_DIR`, `DOTFILESYNC_BIN_DIR`, `DOTFILESYNC_NO_OPEN=1` and
+`DOTFILESYNC_SKIP_REGISTER=1` adjust `local-install`.
+
+By hand:
+
 ```sh
 xcodebuild -project App/DotfileSync.xcodeproj -scheme DotfileSync -configuration Release \
   -destination 'platform=macOS' -derivedDataPath build/DerivedData -allowProvisioningUpdates build

@@ -25,3 +25,6 @@ Thumbs.db
 DerivedData/
 xcuserdata/
 *.xcuserstate
+
+# Local build output (just build-*)
+build/
