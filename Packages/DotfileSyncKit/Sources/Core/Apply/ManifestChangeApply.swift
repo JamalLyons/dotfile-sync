@@ -86,6 +86,7 @@ func applyPromote(
     }
 
     var sourceBackup: FilePath?
+    var sourceCurrent: [UInt8]?
     let sourceMatches: Bool
     switch lstatPath(source) {
     case let .success(st):
@@ -101,11 +102,18 @@ func applyPromote(
         sourceMatches = current == bytes
         if !sourceMatches {
             // Only the planned content may be replaced; an edit made after the plan is kept.
-            guard let sourceSha256, sha256Hex(current) == sourceSha256 else {
+            guard let sourceSha256 else {
+                // Also the case for plans recorded before the source hash existed.
+                throw ApplyIOError(
+                    "repository path '\(source.string)' exists but the plan expected it to be absent; re-plan the promotion"
+                )
+            }
+            guard sha256Hex(current) == sourceSha256 else {
                 throw ApplyIOError(
                     "repository path '\(source.string)' changed after the plan was approved; re-plan the promotion"
                 )
             }
+            sourceCurrent = current
             sourceBackup = try backupByCopy(
                 source, bytes: current, plan: plan, ctx: ctx, runId: runId, actionId: actionId
             )
@@ -119,6 +127,9 @@ func applyPromote(
         sourceMatches = false
     }
     if !sourceMatches {
+        // Re-checked right before the replace so an edit made while the target was backed up is
+        // not overwritten. A write landing between this check and the rename is still possible.
+        try requireUnchanged(source, expected: sourceCurrent, what: "repository path")
         try writeAtomic(source, bytes: bytes, mode: fileMode(target) ?? 0o644)
     }
 
@@ -205,8 +216,30 @@ private func rewriteManifest(
     let backup = try backupByCopy(
         manifest, bytes: Array(old.utf8), plan: plan, ctx: ctx, runId: runId, actionId: actionId
     )
+    // The manifest was read at the start of the step; an external save since then would be lost
+    // by the replace below, so fail closed instead. A write landing between this check and the
+    // rename is still possible.
+    try requireUnchanged(manifest, expected: Array(old.utf8), what: "manifest")
     try writeAtomic(manifest, bytes: Array(new.utf8), mode: mode)
     return backup
+}
+
+/// Fails unless `path` still holds `expected` (or is still absent when `expected` is nil).
+func requireUnchanged(_ path: FilePath, expected: [UInt8]?, what: String) throws(ApplyIOError) {
+    let changed: Bool
+    switch lstatPath(path) {
+    case let .success(st):
+        if let expected, (st.st_mode & S_IFMT) == S_IFREG, let now = try? readAllBytes(path) {
+            changed = now != expected
+        } else {
+            changed = true
+        }
+    case let .failure(error):
+        changed = !(expected == nil && error.errno == ENOENT)
+    }
+    if changed {
+        throw ApplyIOError("\(what) '\(path.string)' changed while the step was running; re-plan")
+    }
 }
 
 /// Writes `bytes` (the current content of `path`) to

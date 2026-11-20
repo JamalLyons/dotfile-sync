@@ -262,6 +262,18 @@ final class EditorStagedFile {
         case .swapped:
             break
         }
+        // From here the staged name may hold the displaced file, which can be an external writer's
+        // version; it must never be removed by cleanup, only by the explicit paths below.
+        published = true
+        guard let afterSwap = try directory.entry(name) else {
+            // Some volumes (FAT) accept RENAME_SWAP but perform a plain replace: the staged name is
+            // gone and the destination already holds our file. That is the same outcome, and the
+            // same pre-swap window, as the unsupported fallback.
+            return
+        }
+        guard !editorSameInode(afterSwap, metadata) else {
+            throw .io(message: "swap did not exchange '\(destinationPath.string)'; the file was not replaced")
+        }
         // The staged name now holds the file that was at the destination.
         let displaced: Result<EditorSnapshot, EditorError>
         do throws(EditorError) {
@@ -270,24 +282,30 @@ final class EditorStagedFile {
             displaced = .failure(error)
         }
         if case let .success(snapshot) = displaced, Self.isUnchanged(snapshot, expected) {
-            published = true
             directory.remove(name)
             return
         }
 
-        guard case .swapped = try editorSwap(stagedPath, destinationPath) else {
+        let restored: EditorSwapOutcome
+        do throws(EditorError) {
+            restored = try editorSwap(stagedPath, destinationPath)
+        } catch {
+            throw .io(
+                message: "could not restore externally modified file (\(error)); it is preserved at '\(stagedPath.string)'"
+            )
+        }
+        guard case .swapped = restored else {
             // The swap succeeded a moment ago, so this only happens if the filesystem changed.
-            published = true
             throw .io(message: "could not restore externally modified file; it is preserved at '\(stagedPath.string)'")
         }
         // The staged name must hold our file again. If not, a newer external file was displaced.
         if let back = try? directory.entry(name), editorSameInode(back, metadata) {
+            directory.remove(name)
             switch displaced {
             case let .success(snapshot): throw .conflict(current: snapshot.version)
             case let .failure(error): throw error
             }
         }
-        published = true
         throw .io(
             message: "file changed during save; the newer version is preserved at '\(stagedPath.string)'"
         )

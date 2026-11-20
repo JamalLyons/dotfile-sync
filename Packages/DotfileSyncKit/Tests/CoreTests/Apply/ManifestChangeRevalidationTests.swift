@@ -202,7 +202,7 @@ struct ManifestChangeRevalidationTests {
         try "user file\n".write(toFile: f.repoPath.appending("gitconfig").string, atomically: false, encoding: .utf8)
 
         let message = try #require(Self.stepFailure { try applyPlan(plan, context: f.context("p")) })
-        #expect(message.contains("changed after the plan was approved"), "\(message)")
+        #expect(message.contains("plan expected it to be absent"), "\(message)")
         #expect(try text(f.repoPath.appending("gitconfig")) == "user file\n")
         #expect(try f.manifestText() == ManifestChangeTests.manifestBody)
     }
@@ -249,6 +249,23 @@ struct ManifestChangeRevalidationTests {
         let journal = try applyPlan(plan, context: f.context("p"))
         #expect(journal.steps.map(\.status) == [.done])
         #expect(try text(source) == "[user]\n")
+    }
+
+    // MARK: - Re-check right before a replace
+
+    @Test func requireUnchangedDetectsEditsBetweenReadAndWrite() throws {
+        let f = try ManifestChangeTests.fixture()
+        let path = f.repoPath.appending("gitconfig")
+        try "read\n".write(toFile: path.string, atomically: false, encoding: .utf8)
+        try requireUnchanged(path, expected: Array("read\n".utf8), what: "manifest")
+
+        try "edited meanwhile\n".write(toFile: path.string, atomically: false, encoding: .utf8)
+        #expect(throws: ApplyIOError.self) { try requireUnchanged(path, expected: Array("read\n".utf8), what: "manifest") }
+        #expect(throws: ApplyIOError.self) { try requireUnchanged(path, expected: nil, what: "repository path") }
+
+        try FileManager.default.removeItem(atPath: path.string)
+        try requireUnchanged(path, expected: nil, what: "repository path")
+        #expect(throws: ApplyIOError.self) { try requireUnchanged(path, expected: Array("read\n".utf8), what: "manifest") }
     }
 
     // MARK: - Encoding
