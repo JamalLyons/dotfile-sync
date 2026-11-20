@@ -99,7 +99,7 @@ private struct DiscoveryWalker<FS: DiscoveryFileSystem> {
             if meta.kind == .symlink { record(xdg, tool: nil, meta: meta) }
             return
         }
-        guard let names = list(xdg) else { return }
+        guard let names = list(xdg, expecting: meta) else { return }
         for name in names {
             let relative = xdg.appending(name)
             if entries[home.pushing(relative)] != nil { continue }
@@ -111,12 +111,12 @@ private struct DiscoveryWalker<FS: DiscoveryFileSystem> {
 
     mutating func visit(_ relative: FilePath, tool: String?, meta: DiscoveryMetadata, depth: Int) {
         guard record(relative, tool: tool, meta: meta) else { return }
-        guard meta.kind == .directory, classifyConfigPath(relative).class == .config else { return }
+        guard meta.kind == .directory, classifyDiscoveredPath(relative).class == .config else { return }
         guard depth < limits.maxDepth else {
             truncated = true
             return
         }
-        guard let names = list(relative) else { return }
+        guard let names = list(relative, expecting: meta) else { return }
         for name in names {
             let child = relative.appending(name)
             guard let childMeta = fileSystem.metadata(home.pushing(child)) else { continue }
@@ -125,22 +125,23 @@ private struct DiscoveryWalker<FS: DiscoveryFileSystem> {
         }
     }
 
-    /// Lists a config directory: sorted names, capped at `maxEntriesPerDirectory`.
-    mutating func list(_ relative: FilePath) -> [String]? {
+    /// Lists a config directory: sorted names, at most `maxEntriesPerDirectory`. The cap is applied
+    /// while reading, so the filesystem stops after one name past it. Which names survive a
+    /// truncated listing follows directory order. `identity` is the `lstat` result for `relative`;
+    /// the listing fails if the directory opened at that path is not the same inode.
+    mutating func list(_ relative: FilePath, expecting identity: DiscoveryMetadata) -> [String]? {
         let path = home.pushing(relative)
-        let names: [String]
+        let listing: DirectoryListing
         do {
-            names = try fileSystem.listDirectory(path).sorted()
+            listing = try fileSystem.listDirectory(
+                path, expecting: identity, limit: limits.maxEntriesPerDirectory)
         } catch {
             diagnostics.append(
                 Diagnostic.warning("Could not list '\(path.string)'").withDetail(error.description))
             return nil
         }
-        if names.count > limits.maxEntriesPerDirectory {
-            truncated = true
-            return Array(names.prefix(limits.maxEntriesPerDirectory))
-        }
-        return names
+        if listing.truncated { truncated = true }
+        return listing.names.sorted()
     }
 
     /// Adds an entry unless it is already present. Returns `false` once the entry limit is hit.
@@ -152,7 +153,7 @@ private struct DiscoveryWalker<FS: DiscoveryFileSystem> {
             truncated = true
             return false
         }
-        let classification = classifyConfigPath(relative)
+        let classification = classifyDiscoveredPath(relative)
         let isConfig = classification.class == .config
         var entry = DiscoveredEntry(
             path: path,

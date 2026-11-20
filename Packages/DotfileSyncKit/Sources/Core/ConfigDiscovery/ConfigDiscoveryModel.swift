@@ -26,6 +26,9 @@ public enum ConfigClass: String, Codable, Sendable, Hashable, CaseIterable {
     case cache
     /// Tool output that should not be hand-edited: compiled scripts, lockfiles, editor swap files.
     case generated
+    /// An unregistered `~/.config` entry that no rule explains. Excluded by default until a
+    /// registry tool claims it.
+    case unknown
     /// Credentials, keys, tokens, or a directory that holds them. Never opened or listed.
     case secretLike = "secret_like"
 

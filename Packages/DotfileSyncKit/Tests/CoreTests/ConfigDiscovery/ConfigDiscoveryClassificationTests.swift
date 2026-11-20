@@ -34,12 +34,57 @@ struct ConfigDiscoveryClassificationTests {
         #expect(classifyConfigPath(FilePath(path)).reason?.hasPrefix("secret-like") == true)
     }
 
+    /// Unregistered depth-1 ~/.config children are `unknown` in discovery, excluded by default.
+    @Test(arguments: [".config/app", ".config/fishy", ".config/gh", ".config/unknowntool"])
+    func unknownChild(_ path: String) {
+        let result = classifyDiscoveredPath(FilePath(path))
+        #expect(result.class == .unknown)
+        #expect(result.class.isExcludedByDefault)
+        #expect(result.reason?.hasPrefix("unknown") == true)
+    }
+
+    /// Registry-owned children stay `config`, and the pure classifier never returns `unknown`.
+    @Test func unknownIsDiscoveryOnly() {
+        #expect(classifyDiscoveredPath(FilePath(".config/fish")).class == .config)
+        #expect(classifyDiscoveredPath(FilePath(".config/nvim")).class == .config)
+        #expect(classifyConfigPath(FilePath(".config/app")).class == .config)
+        #expect(classifyConfigPath(FilePath(".config/app/x.conf")).class == .config)
+    }
+
+    /// Rules that match earlier than the unknown fallback still win for unregistered children.
+    @Test func ruleBeforeUnknownFallback() {
+        #expect(Self.cls(".config/app/api_token") == .secretLike)
+        #expect(Self.cls(".config/app/Caches/x") == .cache)
+        #expect(Self.cls(".config/app/logs") == .data)
+        #expect(Self.cls(".config/app/__pycache__") == .generated)
+    }
+
     @Test(arguments: [
         ".cache", ".cache/foo/bar", ".config/zed/Cache", ".config/app/Caches/x",
-        ".config/app/GPUCache", ".config/app/index.cache",
+        ".config/app/GPUCache", ".config/app/index.cache", ".config/nvim/node-cache.json",
+        ".config/nvim/cache_dir/x", ".config/nvim/Code Cache/x", ".config/nvim/appcache",
     ])
     func cache(_ path: String) {
         #expect(Self.cls(path) == .cache)
+    }
+
+    /// Substring matches inside a longer word are not cache. These paths are owned by nvim, so
+    /// any non-config class here would come from a rule, not from the unknown fallback.
+    @Test(arguments: [
+        ".config/nvim/cachet.lua", ".config/nvim/mycachetool.lua", ".config/nvim/cachedir.lua",
+        ".config/nvim/precache.lua",
+    ])
+    func cacheSubstringFalsePositives(_ path: String) {
+        #expect(Self.cls(path) == .config)
+    }
+
+    /// Words that contain `token`, `secret`, or `password` but are not those words stay config.
+    @Test(arguments: [
+        ".config/nvim/tokenizer.lua", ".config/nvim/secretary.lua", ".config/nvim/passwordless.md",
+        ".config/nvim/secretive.lua",
+    ])
+    func secretSubstringFalsePositives(_ path: String) {
+        #expect(Self.cls(path) == .config)
     }
 
     @Test(arguments: [
