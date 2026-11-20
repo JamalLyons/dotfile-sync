@@ -162,9 +162,9 @@ public func planManifestChange(
     var updated = manifest
     for action in actions {
         switch action {
-        case let .promoteFile(_, _, _, entrySource, entryTarget, _):
+        case let .promoteFile(_, _, _, entrySource, entryTarget, _, _):
             updated.files.append(TrackedFile(source: entrySource, target: entryTarget))
-        case let .demoteFile(target, _, _):
+        case let .demoteFile(target, _, _, _):
             updated.files.removeAll { rustPathEqual(expandTargetPath($0.target, homeDir: home), target) }
         default:
             break
@@ -175,7 +175,7 @@ public func planManifestChange(
     if let text = String(validating: manifestBytes, as: UTF8.self) {
         var edited = text
         for action in actions {
-            guard case let .promoteFile(_, _, _, entrySource, entryTarget, _) = action else { continue }
+            guard case let .promoteFile(_, _, _, entrySource, entryTarget, _, _) = action else { continue }
             do {
                 edited = try appendingTrackedFile(TrackedFile(source: entrySource, target: entryTarget), to: edited)
             } catch {
@@ -228,7 +228,7 @@ public func manifestChangeFingerprint(_ plan: Plan) throws(OpError) -> String {
     }
     for action in plan.actions {
         switch action.kind {
-        case let .promoteFile(target, source, _, _, _, _):
+        case let .promoteFile(target, source, _, _, _, _, _):
             let hash: String
             do {
                 hash = try promotableTargetHash(home: plan.home, target: target)
@@ -237,7 +237,7 @@ public func manifestChangeFingerprint(_ plan: Plan) throws(OpError) -> String {
             }
             lines.append("promote\t\(target.string)\tsha:\(hash)")
             lines.append("source\t\(source.string)\t\(sourceToken(source))")
-        case let .demoteFile(target, _, _):
+        case let .demoteFile(target, _, _, _):
             lines.append("demote\t\(target.string)\t\(fileTypeToken(target))")
         default:
             throw .failed("plan action \(action.id) (\(action.kind.tag)) is not a manifest change")
@@ -353,6 +353,17 @@ private func planPromotions(_ targets: [FilePath], _ ctx: ChangeContext) throws(
             throw .failed("repository path for '\(target.string)' would overwrite the manifest")
         }
         try checkRepoDestination(source, ctx.repoRoot)
+        // Recorded so apply never overwrites a repository file edited after the plan.
+        let sourceHash: String?
+        if case .success = lstatPath(source) {
+            do {
+                sourceHash = sha256Hex(try readAllBytes(source))
+            } catch {
+                throw .failed("cannot read repository path '\(source.string)': \(error)")
+            }
+        } else {
+            sourceHash = nil
+        }
         let hash: String
         do {
             hash = try promotableTargetHash(home: ctx.home, target: target)
@@ -365,7 +376,8 @@ private func planPromotions(_ targets: [FilePath], _ ctx: ChangeContext) throws(
             manifest: ctx.manifestPath,
             entrySource: encodeManifestPathBytes(entrySourcePath),
             entryTarget: "~/" + encodeManifestPathBytes(relative),
-            targetSha256: hash
+            targetSha256: hash,
+            sourceSha256: sourceHash
         ))
     }
     return actions
@@ -497,7 +509,9 @@ private func planDemotions(_ targets: [FilePath], _ ctx: ChangeContext) throws(O
             }
             throw .failed("'\(target.string)' is not managed by the manifest")
         }
-        actions.append(.demoteFile(target: target, manifest: ctx.manifestPath, entryTarget: entry.target))
+        actions.append(.demoteFile(
+            target: target, manifest: ctx.manifestPath, entryTarget: entry.target, entrySource: entry.source
+        ))
     }
     return actions
 }
@@ -629,9 +643,9 @@ private func listDirectory(_ directory: FilePath) throws(OSIOError) -> [[UInt8]]
 
 private func changeSummary(_ kind: ActionKind) -> String {
     switch kind {
-    case let .promoteFile(target, source, _, _, _, _):
+    case let .promoteFile(target, source, _, _, _, _, _):
         return "promote \(target.string) -> \(source.string)"
-    case let .demoteFile(target, manifest, _):
+    case let .demoteFile(target, manifest, _, _):
         return "demote \(target.string) (remove from \(manifest.string))"
     default:
         return kind.tag

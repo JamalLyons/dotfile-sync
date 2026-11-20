@@ -33,18 +33,24 @@ public enum ActionKind: Codable, Sendable, Equatable {
     case setLoginShell(shell: FilePath)
     /// Copy the machine file `target` (bytes and mode) to the repository path `source`, then
     /// append a `[[files]]` entry (`entrySource` → `entryTarget`) to `manifest`. Apply fails
-    /// closed unless `target` still hashes to `targetSha256`.
+    /// closed unless `target` still hashes to `targetSha256` and `source` is either absent
+    /// (`sourceSha256 == nil`), still hashes to `sourceSha256`, or already holds the target's
+    /// bytes. `source_sha256` is omitted from JSON when nil, so plans written before the field
+    /// existed decode (as "source expected absent") and keep their digest.
     case promoteFile(
         target: FilePath,
         source: FilePath,
         manifest: FilePath,
         entrySource: String,
         entryTarget: String,
-        targetSha256: String
+        targetSha256: String,
+        sourceSha256: String? = nil
     )
-    /// Remove the base `[[files]]` entry for `target` (`entryTarget` as written) from
-    /// `manifest`. The machine file and the repository source are left untouched.
-    case demoteFile(target: FilePath, manifest: FilePath, entryTarget: String)
+    /// Remove the base `[[files]]` entry for `target` from `manifest`. Apply removes it only
+    /// when it is still written with `entryTarget` and, when set, `entrySource`; any other entry
+    /// for `target` fails closed. `entry_source` is omitted from JSON when nil (plans written
+    /// before the field existed). The machine file and the repository source are left untouched.
+    case demoteFile(target: FilePath, manifest: FilePath, entryTarget: String, entrySource: String? = nil)
 
     /// The serde tag value for this variant.
     public var tag: String {
@@ -67,6 +73,7 @@ public enum ActionKind: Codable, Sendable, Equatable {
         case entrySource = "entry_source"
         case entryTarget = "entry_target"
         case targetSha256 = "target_sha256"
+        case sourceSha256 = "source_sha256"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -102,13 +109,15 @@ public enum ActionKind: Codable, Sendable, Equatable {
                 manifest: try path(.manifest),
                 entrySource: try c.decode(String.self, forKey: .entrySource),
                 entryTarget: try c.decode(String.self, forKey: .entryTarget),
-                targetSha256: try c.decode(String.self, forKey: .targetSha256)
+                targetSha256: try c.decode(String.self, forKey: .targetSha256),
+                sourceSha256: try c.decodeIfPresent(String.self, forKey: .sourceSha256)
             )
         case "demote_file":
             self = .demoteFile(
                 target: try path(.target),
                 manifest: try path(.manifest),
-                entryTarget: try c.decode(String.self, forKey: .entryTarget)
+                entryTarget: try c.decode(String.self, forKey: .entryTarget),
+                entrySource: try c.decodeIfPresent(String.self, forKey: .entrySource)
             )
         default:
             throw DecodingError.dataCorruptedError(
@@ -133,17 +142,19 @@ public enum ActionKind: Codable, Sendable, Equatable {
             break
         case let .setLoginShell(shell):
             try c.encode(shell.string, forKey: .shell)
-        case let .promoteFile(target, source, manifest, entrySource, entryTarget, targetSha256):
+        case let .promoteFile(target, source, manifest, entrySource, entryTarget, targetSha256, sourceSha256):
             try c.encode(target.string, forKey: .target)
             try c.encode(source.string, forKey: .source)
             try c.encode(manifest.string, forKey: .manifest)
             try c.encode(entrySource, forKey: .entrySource)
             try c.encode(entryTarget, forKey: .entryTarget)
             try c.encode(targetSha256, forKey: .targetSha256)
-        case let .demoteFile(target, manifest, entryTarget):
+            try c.encodeIfPresent(sourceSha256, forKey: .sourceSha256)
+        case let .demoteFile(target, manifest, entryTarget, entrySource):
             try c.encode(target.string, forKey: .target)
             try c.encode(manifest.string, forKey: .manifest)
             try c.encode(entryTarget, forKey: .entryTarget)
+            try c.encodeIfPresent(entrySource, forKey: .entrySource)
         }
     }
 }

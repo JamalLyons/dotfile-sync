@@ -102,7 +102,7 @@ struct ManifestChangeTests {
         #expect(plan.actions.count == 1)
         #expect(plan.actions[0].risk == .medium)
         #expect(plan.actions[0].reversible)
-        guard case let .promoteFile(t, source, manifest, entrySource, entryTarget, _) = plan.actions[0].kind else {
+        guard case let .promoteFile(t, source, manifest, entrySource, entryTarget, _, _) = plan.actions[0].kind else {
             Issue.record("expected promote_file")
             return
         }
@@ -248,9 +248,9 @@ struct ManifestChangeTests {
         try f.write(home: ".config/fish/config.fish", "v1\n")
         let target = f.homeFile(".config/fish/config.fish")
         var plan = try planManifestChange(f.input(.promote(targets: [target])), hostname: "host")
-        guard case let .promoteFile(t, _, m, es, et, sha) = plan.actions[0].kind else { return }
+        guard case let .promoteFile(t, _, m, es, et, sha, ssha) = plan.actions[0].kind else { return }
         let escape = FilePath(f.tmp.url.appendingPathComponent("escape.txt").path)
-        plan.actions[0].kind = .promoteFile(target: t, source: escape, manifest: m, entrySource: es, entryTarget: et, targetSha256: sha)
+        plan.actions[0].kind = .promoteFile(target: t, source: escape, manifest: m, entrySource: es, entryTarget: et, targetSha256: sha, sourceSha256: ssha)
         #expect(throws: ApplyError.self) { try applyPlan(plan, context: f.context("crafted")) }
         #expect(!FileManager.default.fileExists(atPath: escape.string))
     }
@@ -288,7 +288,7 @@ struct ManifestChangeTests {
         let dir = f.homeFile(".config/nvim")
         let plan = try planManifestChange(f.input(.promote(targets: [dir])), hostname: "host")
         let targets = plan.actions.compactMap { action -> String? in
-            if case let .promoteFile(_, _, _, _, entryTarget, _) = action.kind { return entryTarget }
+            if case let .promoteFile(_, _, _, _, entryTarget, _, _) = action.kind { return entryTarget }
             return nil
         }
         #expect(targets == ["~/.config/nvim/init.lua", "~/.config/nvim/lua/plugins.lua"])
@@ -329,13 +329,14 @@ struct ManifestChangeTests {
 
         let plan = try planManifestChange(f.input(.demote(targets: [target])), hostname: "host")
         #expect(plan.digest == (try planManifestChange(f.input(.demote(targets: [target])), hostname: "host")).digest)
-        guard case let .demoteFile(t, manifest, entryTarget) = plan.actions[0].kind else {
+        guard case let .demoteFile(t, manifest, entryTarget, entrySource) = plan.actions[0].kind else {
             Issue.record("expected demote_file")
             return
         }
         #expect(t == target)
         #expect(manifest == f.manifest)
         #expect(entryTarget == "~/.config/fish/config.fish")
+        #expect(entrySource == "fish/config.fish")
 
         let journal = try applyPlan(plan, context: f.context("d", now: 1_700_000_100_000))
         #expect(journal.steps.map(\.status) == [.done])
