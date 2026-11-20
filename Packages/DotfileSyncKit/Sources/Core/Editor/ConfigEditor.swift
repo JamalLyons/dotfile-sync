@@ -14,6 +14,7 @@ public struct ConfigEditor: Sendable {
     private let backupRoot: FilePath
     private let maxFileSize: Int
     private let now: @Sendable () -> UInt64
+    private let beforePublish: (@Sendable (FilePath) -> Void)?
 
     /// Configures the editor with existing absolute directory roots and an absolute backup path.
     ///
@@ -35,7 +36,8 @@ public struct ConfigEditor: Sendable {
         backupRoot: FilePath,
         maxFileSize: Int = 1_048_576,
         now: @escaping @Sendable () -> UInt64,
-        confiningRootsTo home: FilePath?
+        confiningRootsTo home: FilePath?,
+        beforePublish: (@Sendable (FilePath) -> Void)? = nil
     ) throws(EditorError) {
         guard maxFileSize >= 0 else { throw .io(message: "max file size must be nonnegative") }
         let home = try home.map { path throws(EditorError) in try Self.validate(path) }
@@ -56,6 +58,7 @@ public struct ConfigEditor: Sendable {
         self.backupRoot = try editorCanonicalDirectory(Self.validate(backupRoot), allowingMissing: true)
         self.maxFileSize = maxFileSize
         self.now = now
+        self.beforePublish = beforePublish
     }
 
     /// Reads a confined file. Binary documents have bytes and a version but no editable text.
@@ -74,6 +77,8 @@ public struct ConfigEditor: Sendable {
     }
 
     /// Copies the current file to the backup directory, then atomically replaces it.
+    /// A write by another process that lands before the replacement completes is reported as
+    /// `.conflict` and remains at `path`; see `EditorStagedFile.publishSwapping` for what is not covered.
     /// Set `force` to explicitly allow a stale version. All other checks still apply.
     public func save(
         path: FilePath, text: String, expectedVersion: FileVersion, force: Bool = false
@@ -92,7 +97,11 @@ public struct ConfigEditor: Sendable {
             let backup = try copyBackup(of: current, relativeToRoot: location, stamp: stamp)
             do throws(EditorError) {
                 try verifyUnchanged(current, directory: directory, name: location.name)
-                try replacement.publish(as: location.name, replacing: true)
+                // Test seam: runs in the window between the check and the publish.
+                beforePublish?(directory.path.appending(location.name))
+                // The check above can be outrun by an external write. Publishing swaps and re-checks
+                // the displaced file, so such a write is reported as a conflict and left in place.
+                try replacement.publishSwapping(as: location.name, expecting: current, limit: maxFileSize)
             } catch {
                 if let entry = try? backup.directory.entry(backup.name), editorSameInode(entry, backup.metadata) {
                     backup.directory.remove(backup.name)

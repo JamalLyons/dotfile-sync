@@ -218,6 +218,37 @@ struct ConfigEditorTests {
         #expect(try fixture.read(#require(forced.backupPath)) == "external")
     }
 
+    @Test func externalWriteBetweenVerifyAndPublishIsReportedAndPreserved() throws {
+        let fixture = try Fixture()
+        let path = fixture.root.appending("config")
+        try fixture.write(path, "original")
+        let editor = try ConfigEditor(
+            allowedRoots: [fixture.root], backupRoot: fixture.backups, now: { 1_700_000_000_000 },
+            confiningRootsTo: nil,
+            beforePublish: { target in
+                // Another process replaces the file after the editor's check.
+                try? syncFile(target, bytes: Array("external!".utf8))
+            }
+        )
+        let opened = try editor.open(path: path)
+
+        do {
+            _ = try editor.save(path: path, text: "edited", expectedVersion: opened.version)
+            Issue.record("expected conflict")
+        } catch {
+            guard case let .conflict(current) = error else {
+                Issue.record("unexpected error \(error)")
+                return
+            }
+            #expect(current.sha256 == sha256Hex(Array("external!".utf8)))
+        }
+        #expect(try fixture.read(path) == "external!")
+        #expect(try fixture.entries(fixture.root) == ["config"])
+        // The backup is removed on failure, so no stale backup is left behind.
+        let backups = pathPresent(fixture.backups) ? try fixture.entries(fixture.backups) : []
+        #expect(backups.isEmpty)
+    }
+
     @Test func createsAndRenamesOnlyWithinOneRootWithoutReplacing() throws {
         let fixture = try Fixture()
         let source = fixture.root.appending("new/nested/config")

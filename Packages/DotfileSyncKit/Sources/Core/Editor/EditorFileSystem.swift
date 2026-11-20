@@ -222,14 +222,106 @@ final class EditorStagedFile {
     }
 
     func publish(as destination: FilePath.Component, replacing: Bool = false) throws(EditorError) {
-        guard let current = try directory.entry(name), editorSameFileState(current, metadata) else {
-            throw .io(message: "temporary file changed before rename '\(directory.path.appending(name).string)'")
-        }
+        try requireStaged()
         try editorRename(
             directory.path.appending(name), directory.path.appending(destination), replacing: replacing
         )
         published = true
     }
+
+    /// Replaces `destination` by swapping it with the staged file, then checks what was swapped out.
+    ///
+    /// A plain rename discards whatever is at `destination` at that instant, so a write that lands
+    /// between the caller's last check and the rename is lost. Swapping makes the displaced file
+    /// observable: it is now at the staged name and must still be exactly `expected` (same inode,
+    /// size, mtime and contents). If it is not, the swap is reversed so the external writer's file is
+    /// back at `destination` and the staged file is discarded, and the error is `.conflict`.
+    ///
+    /// Not prevented:
+    /// - A writer that opened the old inode before the swap and writes through that descriptor after
+    ///   the check passes. Its bytes land in the displaced inode, which is then unlinked (the backup
+    ///   still holds the content copied before the swap). Without cooperative locking this cannot be
+    ///   detected from outside the writer.
+    /// - A write to the displaced inode between the check and the unlink, for the same reason.
+    /// - A writer that replaces `destination` by rename while a conflict is being reversed. The
+    ///   reversal then displaces that newer file to the staged name; it is left there and reported
+    ///   in an `.io` error rather than deleted.
+    /// - Volumes without `RENAME_SWAP`. These fall back to a single replacing rename, which keeps
+    ///   the pre-swap window between the caller's check and the rename.
+    func publishSwapping(
+        as destination: FilePath.Component, expecting expected: EditorSnapshot, limit: Int
+    ) throws(EditorError) {
+        try requireStaged()
+        let stagedPath = directory.path.appending(name)
+        let destinationPath = directory.path.appending(destination)
+        switch try editorSwap(stagedPath, destinationPath) {
+        case .unsupported:
+            try editorRename(stagedPath, destinationPath, replacing: true)
+            published = true
+            return
+        case .swapped:
+            break
+        }
+        // The staged name now holds the file that was at the destination.
+        let displaced: Result<EditorSnapshot, EditorError>
+        do throws(EditorError) {
+            displaced = .success(try EditorSnapshot(directory: directory, name: name, limit: limit))
+        } catch {
+            displaced = .failure(error)
+        }
+        if case let .success(snapshot) = displaced, Self.isUnchanged(snapshot, expected) {
+            published = true
+            directory.remove(name)
+            return
+        }
+
+        guard case .swapped = try editorSwap(stagedPath, destinationPath) else {
+            // The swap succeeded a moment ago, so this only happens if the filesystem changed.
+            published = true
+            throw .io(message: "could not restore externally modified file; it is preserved at '\(stagedPath.string)'")
+        }
+        // The staged name must hold our file again. If not, a newer external file was displaced.
+        if let back = try? directory.entry(name), editorSameInode(back, metadata) {
+            switch displaced {
+            case let .success(snapshot): throw .conflict(current: snapshot.version)
+            case let .failure(error): throw error
+            }
+        }
+        published = true
+        throw .io(
+            message: "file changed during save; the newer version is preserved at '\(stagedPath.string)'"
+        )
+    }
+
+    private func requireStaged() throws(EditorError) {
+        guard let current = try directory.entry(name), editorSameFileState(current, metadata) else {
+            throw .io(message: "temporary file changed before rename '\(directory.path.appending(name).string)'")
+        }
+    }
+
+    private static func isUnchanged(_ observed: EditorSnapshot, _ expected: EditorSnapshot) -> Bool {
+        editorSameInode(observed.metadata, expected.metadata)
+            && observed.metadata.st_size == expected.metadata.st_size
+            && observed.metadata.st_mtimespec.tv_sec == expected.metadata.st_mtimespec.tv_sec
+            && observed.metadata.st_mtimespec.tv_nsec == expected.metadata.st_mtimespec.tv_nsec
+            && observed.bytes == expected.bytes
+    }
+}
+
+enum EditorSwapOutcome { case swapped, unsupported }
+
+/// Atomically exchanges two names. Both must exist.
+func editorSwap(_ first: FilePath, _ second: FilePath) throws(EditorError) -> EditorSwapOutcome {
+    let flags = UInt32(RENAME_NOFOLLOW_ANY | RENAME_SWAP)
+    let result = first.withPlatformString { source in
+        second.withPlatformString { destination in
+            renameatx_np(AT_FDCWD, source, AT_FDCWD, destination, flags)
+        }
+    }
+    if result == 0 { return .swapped }
+    let code = errno
+    if code == ENOTSUP || code == EINVAL { return .unsupported }
+    throw editorIO("swap files", second, code: code)
 }
 
 func editorRename(_ from: FilePath, _ to: FilePath, replacing: Bool = false) throws(EditorError) {
