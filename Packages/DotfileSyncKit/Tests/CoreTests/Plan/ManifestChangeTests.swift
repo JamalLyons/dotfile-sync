@@ -206,7 +206,13 @@ struct ManifestChangeTests {
         #expect(throws: ApplyError.self) { try applyPlan(plan, context: f.context("stale")) }
         do {
             _ = try applyPlan(plan, context: f.context("stale2"))
-        } catch let ApplyError.stepFailed(_, message, _) {
+            Issue.record("expected step failure")
+        } catch {
+            // Not `catch let ApplyError.stepFailed(…)`: crashes the Xcode 26 SIL ownership verifier.
+            guard case let .stepFailed(_, message, _) = error else {
+                Issue.record("unexpected error: \(error)")
+                return
+            }
             #expect(message.contains("changed after the plan"))
         }
         #expect(try f.manifestText() == Self.manifestBody)

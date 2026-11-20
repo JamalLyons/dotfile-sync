@@ -9,6 +9,7 @@ import Testing
 private final class RecordingFileSystem: DiscoveryFileSystem {
     let base = DarwinDiscoveryFileSystem()
     private(set) var listed: [String] = []
+    private(set) var listLimits: [Int] = []
     private(set) var statted: [String] = []
 
     func metadata(_ path: FilePath) -> DiscoveryMetadata? {
@@ -16,9 +17,46 @@ private final class RecordingFileSystem: DiscoveryFileSystem {
         return base.metadata(path)
     }
 
-    func listDirectory(_ path: FilePath) throws(OSIOError) -> [String] {
+    func listDirectory(
+        _ path: FilePath, expecting identity: DiscoveryMetadata, limit: Int
+    ) throws(OSIOError) -> DirectoryListing {
         listed.append(path.string)
-        return try base.listDirectory(path)
+        listLimits.append(limit)
+        return try base.listDirectory(path, expecting: identity, limit: limit)
+    }
+
+    func symlinkDestination(_ path: FilePath) -> FilePath? {
+        base.symlinkDestination(path)
+    }
+}
+
+/// Real Darwin filesystem, except that `action` runs once, after the walker's `lstat` of `target`
+/// and before the listing opens it. This is the lstat/open race, injected deterministically.
+private final class SwapBeforeListFileSystem: DiscoveryFileSystem {
+    let base = DarwinDiscoveryFileSystem()
+    let target: String
+    let action: () -> Void
+    private var fired = false
+    private(set) var listed: [String] = []
+
+    init(target: String, action: @escaping () -> Void) {
+        self.target = target
+        self.action = action
+    }
+
+    func metadata(_ path: FilePath) -> DiscoveryMetadata? {
+        base.metadata(path)
+    }
+
+    func listDirectory(
+        _ path: FilePath, expecting identity: DiscoveryMetadata, limit: Int
+    ) throws(OSIOError) -> DirectoryListing {
+        listed.append(path.string)
+        if !fired, path.string == target {
+            fired = true
+            action()
+        }
+        return try base.listDirectory(path, expecting: identity, limit: limit)
     }
 
     func symlinkDestination(_ path: FilePath) -> FilePath? {
@@ -145,6 +183,7 @@ struct ConfigDiscoveryTests {
             (".aws", .secretLike), (".netrc", .secretLike), (".config/fish/logs", .data),
             (".config/nvim/.git", .data), (".zsh_history", .data), (".config/zed/node_modules", .generated),
             (".config/zed/Cache", .cache), (".config/nvim/lazy-lock.json", .generated),
+            (".config/unknowntool", .unknown), (".config/gh", .unknown),
         ] {
             let e = try #require(Self.entry(report, home, relative), "missing \(relative)")
             #expect(e.class == expected, "\(relative)")
@@ -172,7 +211,8 @@ struct ConfigDiscoveryTests {
         let unknown = try #require(Self.entry(report, home, ".config/unknowntool"))
         #expect(unknown.tool == nil)
         #expect(unknown.kind == .directory)
-        #expect(unknown.class == .config)
+        #expect(unknown.class == .unknown)
+        #expect(unknown.isExcluded)
         // gh is listed as a depth-1 child but its hosts.yml is never reached.
         #expect(Self.entry(report, home, ".config/gh")?.tool == nil)
         #expect(Self.entry(report, home, ".config/gh/hosts.yml") == nil)
@@ -180,6 +220,52 @@ struct ConfigDiscoveryTests {
         #expect(Self.entry(report, home, "Library/Application Support/com.mitchellh.ghostty/config")?.tool == "ghostty")
         #expect(Self.entry(report, home, "Library/Application Support/OtherApp") == nil)
         #expect(Self.entry(report, home, "Documents") == nil)
+    }
+
+    // AC: the per-directory cap is enforced while reading. The walker never asks for more than the
+    // cap, and the Darwin seam returns at most `limit` names and reports the overflow.
+    @Test func directoryReadIsCappedAtPerDirectoryLimit() throws {
+        let home = try TempDir()
+        for i in 0..<50 { try Self.write("\(home.path)/.config/fish/functions/f\(i).fish") }
+        let fs = RecordingFileSystem()
+        let report = discoverConfigs(
+            home: FilePath(home.path), environment: Self.env(),
+            limits: ConfigDiscoveryLimits(maxEntriesPerDirectory: 4), fileSystem: fs)
+        #expect(!fs.listLimits.isEmpty)
+        #expect(fs.listLimits.allSatisfy { $0 == 4 })
+        #expect(report.truncated)
+        #expect(report.entries.filter { $0.relativePath.hasPrefix(".config/fish/functions/") }.count == 4)
+    }
+
+    @Test func listingUnderLimitIsNotTruncated() throws {
+        let home = try TempDir()
+        for i in 0..<3 { try Self.write("\(home.path)/.config/fish/functions/f\(i).fish") }
+        let report = discoverConfigs(
+            home: FilePath(home.path), environment: Self.env(),
+            limits: ConfigDiscoveryLimits(maxEntriesPerDirectory: 3))
+        #expect(!report.truncated)
+        #expect(report.entries.filter { $0.relativePath.hasPrefix(".config/fish/functions/") }.count == 3)
+    }
+
+    // AC: a directory swapped for a symlink after its lstat is refused, never listed through the
+    // link, and reported as a diagnostic.
+    @Test func directorySwappedForSymlinkBeforeOpenIsRefused() throws {
+        let home = try TempDir(), outside = try TempDir()
+        try Self.write("\(home.path)/.config/fish/config.fish")
+        try Self.write("\(outside.path)/evil.fish")
+        let fishDir = "\(home.path)/.config/fish"
+        let fs = SwapBeforeListFileSystem(target: fishDir) {
+            try? FileManager.default.removeItem(atPath: fishDir)
+            try? Self.symlink(outside.path, at: fishDir)
+        }
+        let report = discoverConfigs(home: FilePath(home.path), environment: Self.env(), fileSystem: fs)
+
+        #expect(Self.entry(report, home, ".config/fish/config.fish") == nil)
+        #expect(Self.entry(report, home, ".config/fish/evil.fish") == nil)
+        #expect(!report.entries.contains { $0.path.string.hasPrefix(outside.path) })
+        #expect(!fs.listed.contains { $0.hasPrefix(outside.path) })
+        #expect(fs.listed.contains(fishDir))
+        #expect(!report.diagnostics.isEmpty)
     }
 
     @Test func entryLimitTruncates() throws {
