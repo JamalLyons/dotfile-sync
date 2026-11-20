@@ -1,10 +1,18 @@
 // Executors for `promote_file` and `demote_file`.
 //
 // Both are idempotent so ``resumeRun(runDir:plan:context:progress:isCancelled:)`` can re-run a
-// step that crashed mid-way: promote skips the copy when the repository source already holds
-// the target's bytes and skips the manifest edit when the entry is already present; demote is
-// `skipped` when the entry is already gone. The manifest is backed up by copy (never moved, so
-// it always exists on disk) before it is rewritten atomically.
+// step that crashed mid-way, and both revalidate every path they touch against the plan first,
+// so fresh apply and resume alike accept only the planned pre-state or the state the step itself
+// produces; anything else (an edit made after the plan or after a crash) fails closed before any
+// write.
+//
+// Promote: the target must still hash to `targetSha256`; the repository source must be absent
+// (when `sourceSha256` is nil), still hash to `sourceSha256`, or already hold the target's bytes
+// (copy then skipped); an existing base entry for the target must be exactly `entrySource` →
+// `entryTarget` (manifest edit then skipped). Demote: removes the single base entry for the
+// target only when it is still written as `entryTarget` (and `entrySource`, when the plan records
+// it); `skipped` when no entry for the target is left. The manifest is backed up by copy (never
+// moved, so it always exists on disk) before it is rewritten atomically.
 
 import Darwin
 import System
@@ -22,6 +30,7 @@ func applyPromote(
     entrySource: String,
     entryTarget: String,
     targetSha256: String,
+    sourceSha256: String?,
     plan: Plan,
     ctx: ApplyContext,
     runId: String,
@@ -34,12 +43,16 @@ func applyPromote(
     } catch {
         throw ApplyIOError("failed to reload manifest: \(error)")
     }
-    let existing = parsed.files.first {
+    let matching = parsed.files.filter {
         rustPathEqual(expandTargetPath($0.target, homeDir: plan.home), target)
     }
-    if let existing, existing.source != entrySource {
+    if matching.count > 1 {
+        throw ApplyIOError("'\(target.string)' has \(matching.count) manifest entries; re-plan the promotion")
+    }
+    let existing = matching.first
+    if let existing, existing.source != entrySource || existing.target != entryTarget {
         throw ApplyIOError(
-            "'\(target.string)' is now managed with source '\(existing.source)'; re-plan the promotion"
+            "'\(target.string)' is now managed as '\(existing.source)' -> '\(existing.target)'; re-plan the promotion"
         )
     }
 
@@ -73,6 +86,7 @@ func applyPromote(
     }
 
     var sourceBackup: FilePath?
+    var sourceCurrent: [UInt8]?
     let sourceMatches: Bool
     switch lstatPath(source) {
     case let .success(st):
@@ -87,14 +101,35 @@ func applyPromote(
         }
         sourceMatches = current == bytes
         if !sourceMatches {
+            // Only the planned content may be replaced; an edit made after the plan is kept.
+            guard let sourceSha256 else {
+                // Also the case for plans recorded before the source hash existed.
+                throw ApplyIOError(
+                    "repository path '\(source.string)' exists but the plan expected it to be absent; re-plan the promotion"
+                )
+            }
+            guard sha256Hex(current) == sourceSha256 else {
+                throw ApplyIOError(
+                    "repository path '\(source.string)' changed after the plan was approved; re-plan the promotion"
+                )
+            }
+            sourceCurrent = current
             sourceBackup = try backupByCopy(
                 source, bytes: current, plan: plan, ctx: ctx, runId: runId, actionId: actionId
             )
         }
     case .failure:
+        if sourceSha256 != nil {
+            throw ApplyIOError(
+                "repository path '\(source.string)' was removed after the plan was approved; re-plan the promotion"
+            )
+        }
         sourceMatches = false
     }
     if !sourceMatches {
+        // Re-checked right before the replace so an edit made while the target was backed up is
+        // not overwritten. A write landing between this check and the rename is still possible.
+        try requireUnchanged(source, expected: sourceCurrent, what: "repository path")
         try writeAtomic(source, bytes: bytes, mode: fileMode(target) ?? 0o644)
     }
 
@@ -107,11 +142,12 @@ func applyPromote(
     return ManifestChangeOutcome(status: .done, backupPath: manifestBackup)
 }
 
-/// Removes the base `[[files]]` entry for `target`. Never touches the machine file.
+/// Removes the planned base `[[files]]` entry for `target`. Never touches the machine file.
 func applyDemote(
     target: FilePath,
     manifest: FilePath,
     entryTarget: String,
+    entrySource: String?,
     plan: Plan,
     ctx: ApplyContext,
     runId: String,
@@ -124,10 +160,20 @@ func applyDemote(
     } catch {
         throw ApplyIOError("failed to reload manifest: \(error)")
     }
-    guard let index = parsed.files.firstIndex(where: {
-        rustPathEqual(expandTargetPath($0.target, homeDir: plan.home), target)
-    }) else {
+    let indices = parsed.files.indices.filter {
+        rustPathEqual(expandTargetPath(parsed.files[$0].target, homeDir: plan.home), target)
+    }
+    guard let index = indices.first else {
         return ManifestChangeOutcome(status: .skipped)
+    }
+    if indices.count > 1 {
+        throw ApplyIOError("'\(target.string)' has \(indices.count) manifest entries; re-plan the demotion")
+    }
+    let entry = parsed.files[index]
+    if entry.target != entryTarget || (entrySource.map { $0 != entry.source } ?? false) {
+        throw ApplyIOError(
+            "the manifest entry for '\(target.string)' is now '\(entry.source)' -> '\(entry.target)', not the planned entry; re-plan the demotion"
+        )
     }
     let edited: String
     do {
@@ -170,8 +216,30 @@ private func rewriteManifest(
     let backup = try backupByCopy(
         manifest, bytes: Array(old.utf8), plan: plan, ctx: ctx, runId: runId, actionId: actionId
     )
+    // The manifest was read at the start of the step; an external save since then would be lost
+    // by the replace below, so fail closed instead. A write landing between this check and the
+    // rename is still possible.
+    try requireUnchanged(manifest, expected: Array(old.utf8), what: "manifest")
     try writeAtomic(manifest, bytes: Array(new.utf8), mode: mode)
     return backup
+}
+
+/// Fails unless `path` still holds `expected` (or is still absent when `expected` is nil).
+func requireUnchanged(_ path: FilePath, expected: [UInt8]?, what: String) throws(ApplyIOError) {
+    let changed: Bool
+    switch lstatPath(path) {
+    case let .success(st):
+        if let expected, (st.st_mode & S_IFMT) == S_IFREG, let now = try? readAllBytes(path) {
+            changed = now != expected
+        } else {
+            changed = true
+        }
+    case let .failure(error):
+        changed = !(expected == nil && error.errno == ENOENT)
+    }
+    if changed {
+        throw ApplyIOError("\(what) '\(path.string)' changed while the step was running; re-plan")
+    }
 }
 
 /// Writes `bytes` (the current content of `path`) to

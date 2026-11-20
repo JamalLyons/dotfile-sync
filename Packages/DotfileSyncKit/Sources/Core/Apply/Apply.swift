@@ -335,19 +335,19 @@ private func execute(
             return .success(.done)
         case let .setLoginShell(shell):
             return .success(try setLoginShell(ctx, shell))
-        case let .promoteFile(target, source, manifest, entrySource, entryTarget, targetSha256):
+        case let .promoteFile(target, source, manifest, entrySource, entryTarget, targetSha256, sourceSha256):
             try requirePlanManifest(plan, manifest)
             let outcome = try applyPromote(
                 target: target, source: source, manifest: manifest, entrySource: entrySource,
-                entryTarget: entryTarget, targetSha256: targetSha256, plan: plan, ctx: ctx,
-                runId: runId, actionId: actionId
+                entryTarget: entryTarget, targetSha256: targetSha256, sourceSha256: sourceSha256,
+                plan: plan, ctx: ctx, runId: runId, actionId: actionId
             )
             return .success(Outcome(status: outcome.status, backupPath: outcome.backupPath))
-        case let .demoteFile(target, manifest, entryTarget):
+        case let .demoteFile(target, manifest, entryTarget, entrySource):
             try requirePlanManifest(plan, manifest)
             let outcome = try applyDemote(
-                target: target, manifest: manifest, entryTarget: entryTarget, plan: plan, ctx: ctx,
-                runId: runId, actionId: actionId
+                target: target, manifest: manifest, entryTarget: entryTarget, entrySource: entrySource,
+                plan: plan, ctx: ctx, runId: runId, actionId: actionId
             )
             return .success(Outcome(status: outcome.status, backupPath: outcome.backupPath))
         }

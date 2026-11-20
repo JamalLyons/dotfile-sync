@@ -33,6 +33,9 @@ public struct ConfigInspector: Sendable {
     public var homeDir: FilePath
     public var exclusions: ExclusionsSection
     public var overrides: [MachineOverride]
+    /// Runs after a file's identity is captured and before it is opened for hashing.
+    /// Tests use it to replace the file at that point.
+    var beforeOpen: (@Sendable (FilePath) -> Void)?
 
     public init(
         repoRoot: FilePath,
@@ -122,8 +125,9 @@ public struct ConfigInspector: Sendable {
             return result(.unreadable, diagnostic)
         }
 
+        let canonicalSource: FilePath
         do {
-            let canonicalSource = try canonicalize(sourcePath)
+            canonicalSource = try canonicalize(sourcePath)
             if !rustPathStartsWith(canonicalSource, repoRootCanonical) {
                 return result(
                     .sourceOutsideRoot,
@@ -134,9 +138,17 @@ public struct ConfigInspector: Sendable {
             return result(.unreadable, "Failed to resolve canonical source path: \(error)")
         }
 
+        // The canonical path has no symlinks, so the open refuses any component that became one
+        // after canonicalization, and the hash comes from the descriptor whose identity matched.
         let sourceHash: String
         do {
-            sourceHash = try computeSha256(sourcePath)
+            let expected: stat
+            switch lstatPath(canonicalSource) {
+            case let .success(st): expected = st
+            case let .failure(error): throw InspectReadError.os(error)
+            }
+            sourceHash = try hashFileNoFollow(
+                canonicalSource, expected: expected, flags: O_NOFOLLOW_ANY, beforeOpen: beforeOpen)
         } catch {
             return result(.unreadable, "Failed to compute hash for source file: \(error)")
         }
@@ -210,7 +222,10 @@ public struct ConfigInspector: Sendable {
         let targetSize = UInt64(clamping: targetStat.st_size)
         let targetHash: String
         do {
-            targetHash = try computeSha256(targetPath)
+            // HOME parents may be symlinks, so only the final component is opened no-follow;
+            // the descriptor must still be the inode the lstat above classified.
+            targetHash = try hashFileNoFollow(
+                targetPath, expected: targetStat, flags: O_NOFOLLOW, beforeOpen: beforeOpen)
         } catch {
             return result(
                 .unreadable,
@@ -263,13 +278,61 @@ public struct ConfigInspector: Sendable {
 }
 
 /// Hex-encoded (lowercase) SHA-256 of the file at `path`, streamed in 8 KiB chunks.
+/// The path is opened with `open(O_RDONLY | O_CLOEXEC)` and symlinks are followed.
 public func computeSha256(_ path: FilePath) throws(OSIOError) -> String {
     let fd = path.withPlatformString { open($0, O_RDONLY | O_CLOEXEC) }
     if fd < 0 {
         throw OSIOError.current()
     }
     defer { close(fd) }
+    return try streamSha256(fd)
+}
 
+/// A failure while hashing a file the inspector already classified.
+enum InspectReadError: Error, CustomStringConvertible {
+    case os(OSIOError)
+    /// The opened descriptor is not the inode observed before opening.
+    case replaced
+
+    var description: String {
+        switch self {
+        case let .os(error): error.description
+        case .replaced: "file was replaced while it was being inspected"
+        }
+    }
+}
+
+/// Opens `path` without following a symlink (`flags` is `O_NOFOLLOW` or `O_NOFOLLOW_ANY`),
+/// checks with `fstat` that the descriptor is the regular file `expected` describes (same
+/// `st_dev`/`st_ino`), and hashes from that descriptor. The path is never reopened by name.
+/// A directory fails with `EISDIR` and any other non-regular file with `EFTYPE`; `O_NONBLOCK`
+/// keeps a FIFO from blocking the open.
+func hashFileNoFollow(
+    _ path: FilePath, expected: stat, flags: Int32, beforeOpen: (@Sendable (FilePath) -> Void)? = nil
+) throws(InspectReadError) -> String {
+    beforeOpen?(path)
+    let fd = path.withPlatformString { open($0, O_RDONLY | O_NONBLOCK | O_CLOEXEC | flags) }
+    if fd < 0 {
+        throw .os(OSIOError.current())
+    }
+    defer { close(fd) }
+    var opened = stat()
+    guard fstat(fd, &opened) == 0 else { throw .os(OSIOError.current()) }
+    guard opened.st_dev == expected.st_dev, opened.st_ino == expected.st_ino else { throw .replaced }
+    switch opened.st_mode & S_IFMT {
+    case S_IFREG: break
+    case S_IFDIR: throw .os(OSIOError(errno: EISDIR))
+    default: throw .os(OSIOError(errno: EFTYPE))
+    }
+    do {
+        return try streamSha256(fd)
+    } catch {
+        throw .os(error)
+    }
+}
+
+/// Streams `fd` to EOF in 8 KiB chunks and returns the lowercase hex SHA-256.
+private func streamSha256(_ fd: Int32) throws(OSIOError) -> String {
     var hasher = SHA256()
     var buffer = [UInt8](repeating: 0, count: 8192)
     while true {
@@ -277,6 +340,7 @@ public func computeSha256(_ path: FilePath) throws(OSIOError) -> String {
             read(fd, raw.baseAddress, raw.count)
         }
         if bytesRead < 0 {
+            if errno == EINTR { continue }
             throw OSIOError.current()
         }
         if bytesRead == 0 {
