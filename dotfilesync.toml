@@ -222,3 +222,13 @@ patterns = [
 [[overrides]]
 target = "~/.config/fish/conf.d/local.fish"
 description = "Machine-local Fish environment variables and private tokens"
+
+[[files]]
+source = "fish/functions/devclean.fish"
+target = "~/.config/fish/functions/devclean.fish"
+description = "devclean wrapper: runs ~/bin/devclean.sh"
+
+[[files]]
+source = "bin/devclean.sh"
+target = "~/bin/devclean.sh"
+description = "Developer cache/build-junk cleaner; dry run by default"
